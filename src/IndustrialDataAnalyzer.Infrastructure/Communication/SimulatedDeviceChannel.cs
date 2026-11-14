@@ -30,10 +30,12 @@ public sealed class SimulatedDeviceChannel(DeviceDefinition device, ILogger<Simu
             throw new InvalidOperationException("模拟设备已经启动。");
         }
 
-        cancellation = new CancellationTokenSource();
+        var source = new CancellationTokenSource();
+        cancellation = source;
         SetState(ConnectionState.Connected, null);
         logger.LogInformation("Simulator started for device {DeviceId}", device.Id);
-        producer = Task.Run(() => ProduceAsync(cancellation.Token), CancellationToken.None);
+        // The field is cleared by DisconnectAsync; the producer must capture its own source.
+        producer = Task.Run(() => ProduceAsync(source.Token), CancellationToken.None);
         return Task.CompletedTask;
     }
 

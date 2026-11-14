@@ -113,6 +113,22 @@ public sealed class DeviceManagerTests
     }
 
     [Fact]
+    public async Task SimulatorCanStopImmediatelyAfterStart()
+    {
+        DeviceDefinition device = Device("Rapid stop", "RS") with
+        {
+            Simulator = new SimulatorOptions { IntervalMilliseconds = 1000 }
+        };
+        for (int attempt = 0; attempt < 50; attempt++)
+        {
+            await using var channel = new SimulatedDeviceChannel(device, NullLogger<SimulatedDeviceChannel>.Instance);
+            await channel.ConnectAsync();
+            await channel.DisconnectAsync();
+            Assert.Equal(ConnectionState.Disconnected, channel.State);
+        }
+    }
+
+    [Fact]
     public async Task FailedConnectionKeepsFaultStateAndManualReconnectRecovers()
     {
         string root = Path.Combine(Path.GetTempPath(), "IndustrialDataAnalyzer.Tests", Guid.NewGuid().ToString("N"));
