@@ -1,0 +1,24 @@
+<UserControl x:Class="IndustrialDataAnalyzer.App.Views.Pages.DevicesPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:IndustrialDataAnalyzer.App.Controls">
+  <StackPanel>
+    <controls:PageHeader Title="{Binding Title}" Description="{Binding Description}" />
+    <controls:SectionCard Header="设备列表">
+      <StackPanel>
+        <TextBlock Text="设备登记与连接功能将在第二阶段开放。" Style="{StaticResource HintText}" Margin="0,0,0,14" />
+        <controls:DataTable Height="144">
+          <controls:DataTable.Columns>
+            <DataGridTextColumn Header="状态" Width="0.7*" />
+            <DataGridTextColumn Header="设备名称" Width="1.1*" />
+            <DataGridTextColumn Header="设备编号" Width="1*" />
+            <DataGridTextColumn Header="通信方式" Width="1*" />
+            <DataGridTextColumn Header="通信参数摘要" Width="1.4*" />
+            <DataGridTextColumn Header="备注" Width="1*" />
+          </controls:DataTable.Columns>
+        </controls:DataTable>
+        <controls:EmptyState Title="尚未添加设备" Message="第二阶段将提供设备登记、通信配置与连接操作。" />
+      </StackPanel>
+    </controls:SectionCard>
+  </StackPanel>
+</UserControl>

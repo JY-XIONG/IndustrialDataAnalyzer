@@ -1,0 +1,41 @@
+<UserControl x:Class="IndustrialDataAnalyzer.App.Views.Pages.HistoryPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:IndustrialDataAnalyzer.App.Controls">
+  <StackPanel>
+    <controls:PageHeader Title="{Binding Title}" Description="{Binding Description}" />
+    <controls:SectionCard Header="查询条件" Margin="0,0,0,18">
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+        <StackPanel><TextBlock Text="设备筛选" Style="{StaticResource FieldLabel}" /><TextBlock Text="全部设备 · 暂无可选设备" Margin="0,8,0,0" /></StackPanel>
+        <StackPanel Grid.Column="1"><TextBlock Text="时间范围" Style="{StaticResource FieldLabel}" /><TextBlock Text="尚无历史数据" Margin="0,8,0,0" /></StackPanel>
+        <StackPanel Grid.Column="2"><TextBlock Text="数据查询" Style="{StaticResource FieldLabel}" /><TextBlock Text="第三阶段开放" Margin="0,8,0,0" /></StackPanel>
+      </Grid>
+    </controls:SectionCard>
+    <Grid Margin="0,0,0,18">
+      <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+      <controls:MetricCard Title="最大值" Value="—" Note="暂无统计数据" Margin="0,0,12,0" />
+      <controls:MetricCard Grid.Column="1" Title="最小值" Value="—" Note="暂无统计数据" Margin="0,0,12,0" />
+      <controls:MetricCard Grid.Column="2" Title="平均值" Value="—" Note="暂无统计数据" Margin="0,0,12,0" />
+      <controls:MetricCard Grid.Column="3" Title="标准差" Value="—" Note="暂无统计数据" />
+    </Grid>
+    <controls:SectionCard Header="历史记录" Margin="0,0,0,18">
+      <StackPanel>
+        <controls:DataTable Height="140">
+          <controls:DataTable.Columns>
+            <DataGridTextColumn Header="采集时间" Width="1.3*" />
+            <DataGridTextColumn Header="设备名称" Width="1.1*" />
+            <DataGridTextColumn Header="测量指标" Width="1*" />
+            <DataGridTextColumn Header="测量值" Width="0.8*" />
+            <DataGridTextColumn Header="单位" Width="0.6*" />
+            <DataGridTextColumn Header="状态" Width="0.7*" />
+          </controls:DataTable.Columns>
+        </controls:DataTable>
+        <controls:EmptyState Title="暂无历史记录" Message="数据存储功能接入后，可按设备和时间查询。" />
+      </StackPanel>
+    </controls:SectionCard>
+    <controls:SectionCard Header="数据对比图表" MinHeight="200">
+      <controls:EmptyState Title="暂无对比数据" Message="选择历史记录后显示数据变化与波动分析。" />
+    </controls:SectionCard>
+  </StackPanel>
+</UserControl>

@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/IndustrialDataAnalyzer.App/IndustrialDataAnalyzer.App.csproj" />
+    <Project Path="src/IndustrialDataAnalyzer.Core/IndustrialDataAnalyzer.Core.csproj" />
+    <Project Path="src/IndustrialDataAnalyzer.Infrastructure/IndustrialDataAnalyzer.Infrastructure.csproj" />
+    <Project Path="src/IndustrialDataAnalyzer.Services/IndustrialDataAnalyzer.Services.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IndustrialDataAnalyzer.Tests/IndustrialDataAnalyzer.Tests.csproj" />
+  </Folder>
+</Solution>

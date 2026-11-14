@@ -1,0 +1,29 @@
+<UserControl x:Class="IndustrialDataAnalyzer.App.Views.Pages.AlarmsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:IndustrialDataAnalyzer.App.Controls">
+  <StackPanel>
+    <controls:PageHeader Title="{Binding Title}" Description="{Binding Description}" />
+    <Grid Margin="0,0,0,18">
+      <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+      <controls:MetricCard Title="报警总数" Value="0" Note="暂无报警记录" Margin="0,0,12,0" />
+      <controls:MetricCard Grid.Column="1" Title="未处理报警" Value="0" Note="当前无待处理事项" Margin="0,0,12,0" />
+      <controls:MetricCard Grid.Column="2" Title="已处理报警" Value="0" Note="暂无处理记录" />
+    </Grid>
+    <controls:SectionCard Header="报警记录">
+      <StackPanel>
+        <TextBlock Text="报警规则、确认与处理记录将在第五阶段开放。" Style="{StaticResource HintText}" Margin="0,0,0,14" />
+        <controls:DataTable Height="144">
+          <controls:DataTable.Columns>
+            <DataGridTextColumn Header="等级" Width="0.6*" />
+            <DataGridTextColumn Header="报警时间" Width="1.2*" />
+            <DataGridTextColumn Header="设备名称" Width="1*" />
+            <DataGridTextColumn Header="报警内容" Width="1.8*" />
+            <DataGridTextColumn Header="状态" Width="0.7*" />
+          </controls:DataTable.Columns>
+        </controls:DataTable>
+        <controls:EmptyState Title="暂无报警" Message="设备运行时产生的报警将在此集中显示。" />
+      </StackPanel>
+    </controls:SectionCard>
+  </StackPanel>
+</UserControl>

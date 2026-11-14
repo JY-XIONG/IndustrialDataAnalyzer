@@ -1,0 +1,32 @@
+<UserControl x:Class="IndustrialDataAnalyzer.App.Views.Pages.AcquisitionPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:IndustrialDataAnalyzer.App.Controls">
+  <StackPanel>
+    <controls:PageHeader Title="{Binding Title}" Description="{Binding Description}" />
+    <Grid Margin="0,0,0,18">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="1*" /></Grid.ColumnDefinitions>
+      <controls:SectionCard Header="当前设备" Margin="0,0,9,0">
+        <StackPanel><TextBlock Text="未选择设备" FontWeight="SemiBold" /><TextBlock Text="设备接入将在第二阶段提供" Style="{StaticResource HintText}" Margin="0,8,0,0" /></StackPanel>
+      </controls:SectionCard>
+      <controls:SectionCard Grid.Column="1" Header="采集状态" Margin="9,0,0,0">
+        <StackPanel><controls:StatusBadge Text="未开始" /><TextBlock Text="当前没有采集任务" Style="{StaticResource HintText}" Margin="0,8,0,0" /></StackPanel>
+      </controls:SectionCard>
+    </Grid>
+    <controls:SectionCard Header="实时测量值" Margin="0,0,0,18" MinHeight="130">
+      <controls:EmptyState Title="暂无测量值" Message="连接设备并启动采集后显示实时数据。" />
+    </controls:SectionCard>
+    <Grid Margin="0,0,0,18">
+      <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+      <controls:SectionCard Header="原始通信报文" Margin="0,0,9,0" MinHeight="160">
+        <controls:EmptyState Title="暂无报文" Message="接收到设备数据后显示原始通信内容。" />
+      </controls:SectionCard>
+      <controls:SectionCard Grid.Column="1" Header="数据解析结果" Margin="9,0,0,0" MinHeight="160">
+        <controls:EmptyState Title="暂无解析结果" Message="配置协议后显示字段和解析值。" />
+      </controls:SectionCard>
+    </Grid>
+    <controls:SectionCard Header="采集记录" MinHeight="150">
+      <controls:EmptyState Title="暂无采集记录" Message="采集记录将在后续阶段显示。" />
+    </controls:SectionCard>
+  </StackPanel>
+</UserControl>

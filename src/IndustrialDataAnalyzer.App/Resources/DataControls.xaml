@@ -1,0 +1,16 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:controls="clr-namespace:IndustrialDataAnalyzer.App.Controls">
+  <Style TargetType="{x:Type controls:DataTable}">
+    <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="GridLinesVisibility" Value="Horizontal" />
+    <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="HeadersVisibility" Value="Column" />
+    <Setter Property="RowHeight" Value="38" />
+    <Setter Property="ColumnHeaderHeight" Value="38" />
+    <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="MinHeight" Value="130" />
+  </Style>
+</ResourceDictionary>

@@ -1,0 +1,41 @@
+<UserControl x:Class="IndustrialDataAnalyzer.App.Views.Pages.OverviewPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:IndustrialDataAnalyzer.App.Controls">
+  <StackPanel>
+    <controls:PageHeader Title="{Binding Title}" Description="{Binding Description}" />
+    <Grid Margin="0,0,0,18">
+      <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+      <controls:MetricCard Grid.Column="0" Title="设备总数" Value="0" Note="尚未建立设备档案" Margin="0,0,12,0" />
+      <controls:MetricCard Grid.Column="1" Title="在线设备" Value="0" Note="暂无设备连接" Margin="0,0,12,0" />
+      <controls:MetricCard Grid.Column="2" Title="今日采集数据" Value="0" Note="今日暂无记录" Margin="0,0,12,0" />
+      <controls:MetricCard Grid.Column="3" Title="未处理报警" Value="0" Note="暂无报警记录" />
+    </Grid>
+    <Grid Margin="0,0,0,18">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*" /><ColumnDefinition Width="1.35*" /></Grid.ColumnDefinitions>
+      <controls:SectionCard Header="设备运行状态" Margin="0,0,9,0" MinHeight="190">
+        <controls:EmptyState Title="暂无设备状态" Message="添加设备并建立连接后，这里会显示运行状态。" />
+      </controls:SectionCard>
+      <controls:SectionCard Grid.Column="1" Header="数据采集趋势" Margin="9,0,0,0" MinHeight="190">
+        <controls:EmptyState Title="暂无趋势数据" Message="完成数据采集后，这里会显示采集量变化。" />
+      </controls:SectionCard>
+    </Grid>
+    <controls:SectionCard Header="设备连接情况" Margin="0,0,0,18">
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+        <StackPanel><TextBlock Text="已连接" Style="{StaticResource HintText}" /><TextBlock Text="0" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,0" /></StackPanel>
+        <StackPanel Grid.Column="1"><TextBlock Text="未连接" Style="{StaticResource HintText}" /><TextBlock Text="0" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,0" /></StackPanel>
+        <StackPanel Grid.Column="2"><TextBlock Text="连接异常" Style="{StaticResource HintText}" /><TextBlock Text="0" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,0" /></StackPanel>
+      </Grid>
+    </controls:SectionCard>
+    <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+      <controls:SectionCard Header="最近采集记录" Margin="0,0,9,0" MinHeight="154">
+        <controls:EmptyState Title="暂无采集记录" Message="设备采集启动后会在此显示最近记录。" />
+      </controls:SectionCard>
+      <controls:SectionCard Grid.Column="1" Header="最近报警记录" Margin="9,0,0,0" MinHeight="154">
+        <controls:EmptyState Title="暂无报警记录" Message="产生报警后会在此显示最近记录。" />
+      </controls:SectionCard>
+    </Grid>
+  </StackPanel>
+</UserControl>

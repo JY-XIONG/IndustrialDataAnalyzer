@@ -1,0 +1,34 @@
+<UserControl x:Class="IndustrialDataAnalyzer.App.Views.Pages.ReportsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:IndustrialDataAnalyzer.App.Controls">
+  <StackPanel>
+    <controls:PageHeader Title="{Binding Title}" Description="{Binding Description}" />
+    <controls:SectionCard Header="报表条件" Margin="0,0,0,18">
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+        <StackPanel><TextBlock Text="报表类型" Style="{StaticResource FieldLabel}" /><TextBlock Text="数据报表" Margin="0,8,0,0" /></StackPanel>
+        <StackPanel Grid.Column="1"><TextBlock Text="设备选择" Style="{StaticResource FieldLabel}" /><TextBlock Text="未选择设备" Margin="0,8,0,0" /></StackPanel>
+        <StackPanel Grid.Column="2"><TextBlock Text="时间范围" Style="{StaticResource FieldLabel}" /><TextBlock Text="尚未设置" Margin="0,8,0,0" /></StackPanel>
+        <StackPanel Grid.Column="3"><TextBlock Text="导出设置" Style="{StaticResource FieldLabel}" /><TextBlock Text="第五阶段开放" Margin="0,8,0,0" /></StackPanel>
+      </Grid>
+    </controls:SectionCard>
+    <controls:SectionCard Header="数据预览" Margin="0,0,0,18" MinHeight="245">
+      <controls:EmptyState Title="暂无可预览数据" Message="选择设备和时间范围后，将在此预览报表内容。" />
+    </controls:SectionCard>
+    <controls:SectionCard Header="历史报表记录">
+      <StackPanel>
+        <controls:DataTable Height="130">
+          <controls:DataTable.Columns>
+            <DataGridTextColumn Header="生成时间" Width="1.2*" />
+            <DataGridTextColumn Header="报表类型" Width="1*" />
+            <DataGridTextColumn Header="设备" Width="1*" />
+            <DataGridTextColumn Header="时间范围" Width="1.5*" />
+            <DataGridTextColumn Header="格式" Width="0.6*" />
+          </controls:DataTable.Columns>
+        </controls:DataTable>
+        <controls:EmptyState Title="暂无报表记录" Message="生成报表后会保留在这里。" />
+      </StackPanel>
+    </controls:SectionCard>
+  </StackPanel>
+</UserControl>

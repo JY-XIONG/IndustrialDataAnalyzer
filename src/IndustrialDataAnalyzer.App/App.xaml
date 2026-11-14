@@ -1,0 +1,26 @@
+<Application x:Class="IndustrialDataAnalyzer.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:IndustrialDataAnalyzer.App.ViewModels.Pages"
+             xmlns:pages="clr-namespace:IndustrialDataAnalyzer.App.Views.Pages">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Resources/Colors.xaml" />
+        <ResourceDictionary Source="Resources/Typography.xaml" />
+        <ResourceDictionary Source="Resources/Buttons.xaml" />
+        <ResourceDictionary Source="Resources/Cards.xaml" />
+        <ResourceDictionary Source="Resources/Navigation.xaml" />
+        <ResourceDictionary Source="Resources/DataControls.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+      <DataTemplate DataType="{x:Type vm:OverviewViewModel}"><pages:OverviewPage /></DataTemplate>
+      <DataTemplate DataType="{x:Type vm:DevicesViewModel}"><pages:DevicesPage /></DataTemplate>
+      <DataTemplate DataType="{x:Type vm:AcquisitionViewModel}"><pages:AcquisitionPage /></DataTemplate>
+      <DataTemplate DataType="{x:Type vm:MonitoringViewModel}"><pages:MonitoringPage /></DataTemplate>
+      <DataTemplate DataType="{x:Type vm:HistoryViewModel}"><pages:HistoryPage /></DataTemplate>
+      <DataTemplate DataType="{x:Type vm:AlarmsViewModel}"><pages:AlarmsPage /></DataTemplate>
+      <DataTemplate DataType="{x:Type vm:ReportsViewModel}"><pages:ReportsPage /></DataTemplate>
+      <DataTemplate DataType="{x:Type vm:SettingsViewModel}"><pages:SettingsPage /></DataTemplate>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>
