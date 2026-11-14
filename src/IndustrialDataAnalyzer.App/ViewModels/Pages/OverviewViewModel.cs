@@ -11,15 +11,20 @@ namespace IndustrialDataAnalyzer.App.ViewModels.Pages;
 public partial class OverviewViewModel : PageViewModel
 {
     private readonly IDeviceManager? manager;
+    private readonly IMeasurementRepository? repository;
     private readonly object frameGate = new();
     private long pendingFrames;
     private ParsedFrame? pendingLatest;
     private readonly DispatcherTimer? refreshTimer;
+    private int refreshTicks;
+    private bool todayBusy;
 
-    public OverviewViewModel(IDeviceManager? manager = null)
+    public OverviewViewModel(IDeviceManager? manager = null, IMeasurementRepository? repository = null)
         : base(NavigationPage.Overview, "系统总览", "查看设备、采集和报警的整体情况")
     {
         this.manager = manager;
+        this.repository = repository;
+        if (repository is not null) _ = RefreshTodayAsync();
         if (manager is not null)
         {
             manager.DevicesChanged += () => UiThread.Post(Refresh);
@@ -32,7 +37,11 @@ public partial class OverviewViewModel : PageViewModel
                 {
                     Interval = TimeSpan.FromMilliseconds(200)
                 };
-                refreshTimer.Tick += (_, _) => FlushPendingFrames();
+                refreshTimer.Tick += (_, _) =>
+                {
+                    FlushPendingFrames();
+                    if (++refreshTicks % 5 == 0) _ = RefreshTodayAsync();
+                };
                 refreshTimer.Start();
             }
         }
@@ -45,6 +54,8 @@ public partial class OverviewViewModel : PageViewModel
     [ObservableProperty] private string statusSummary = "暂无设备状态";
     [ObservableProperty] private long sessionFrames;
     [ObservableProperty] private string latestFrameSummary = "暂无采集记录";
+    [ObservableProperty] private long todaySavedCount;
+    [ObservableProperty] private string todayStorageNotice = "今日已落盘的记录";
     public ObservableCollection<string> DeviceStatusLines { get; } = [];
 
     private void Refresh()
@@ -98,5 +109,20 @@ public partial class OverviewViewModel : PageViewModel
         LatestFrameSummary = frame.IsSuccess
             ? $"{frame.Raw.Timestamp:HH:mm:ss} · {name} · {frame.FieldName} {frame.Value:G} {frame.Unit}"
             : $"{frame.Raw.Timestamp:HH:mm:ss} · {name} · 解析失败：{frame.Error}";
+    }
+
+    internal async Task RefreshTodayAsync()
+    {
+        if (repository is null || todayBusy) return;
+        todayBusy = true;
+        try
+        {
+            DateTimeOffset midnightUtc = new DateTimeOffset(DateTime.Today,
+                TimeZoneInfo.Local.GetUtcOffset(DateTime.Today)).ToUniversalTime();
+            TodaySavedCount = await repository.CountSinceAsync(midnightUtc);
+            TodayStorageNotice = "今日已落盘的记录";
+        }
+        catch (Exception exception) { TodayStorageNotice = "数据库查询失败：" + exception.Message; }
+        finally { todayBusy = false; }
     }
 }

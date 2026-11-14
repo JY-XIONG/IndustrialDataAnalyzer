@@ -5,12 +5,34 @@
   <StackPanel>
     <controls:PageHeader Title="{Binding Title}" Description="{Binding Description}" />
     <controls:SectionCard Header="查询条件" Margin="0,0,0,18">
+      <StackPanel>
       <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
-        <StackPanel><TextBlock Text="设备筛选" Style="{StaticResource FieldLabel}" /><TextBlock Text="全部设备 · 暂无可选设备" Margin="0,8,0,0" /></StackPanel>
-        <StackPanel Grid.Column="1"><TextBlock Text="时间范围" Style="{StaticResource FieldLabel}" /><TextBlock Text="尚无历史数据" Margin="0,8,0,0" /></StackPanel>
-        <StackPanel Grid.Column="2"><TextBlock Text="数据查询" Style="{StaticResource FieldLabel}" /><TextBlock Text="第三阶段开放" Margin="0,8,0,0" /></StackPanel>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="1*" /><ColumnDefinition Width="1.2*" /><ColumnDefinition Width="1*" /></Grid.ColumnDefinitions>
+        <StackPanel Margin="0,0,12,0">
+          <TextBlock Text="设备筛选" Style="{StaticResource FieldLabel}" />
+          <ComboBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}" DisplayMemberPath="Name" Margin="0,8,0,0" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Margin="0,0,12,0">
+          <TextBlock Text="时间范围（本地日期）" Style="{StaticResource FieldLabel}" />
+          <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <DatePicker SelectedDate="{Binding FromDate}" Width="120" />
+            <TextBlock Text=" 至 " VerticalAlignment="Center" />
+            <DatePicker SelectedDate="{Binding ToDate}" Width="120" />
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Column="2">
+          <TextBlock Text="采集会话（最近 200 个）" Style="{StaticResource FieldLabel}" />
+          <ComboBox ItemsSource="{Binding Sessions}" SelectedItem="{Binding SelectedSession}" DisplayMemberPath="Label" Margin="0,8,0,0" />
+          <TextBox Text="{Binding SessionIdText, UpdateSourceTrigger=PropertyChanged}" Margin="0,7,0,0"
+                   ToolTip="可输入完整会话 ID 查询更早的会话" />
+          <TextBlock Text="输入完整会话 ID 可查更早数据" Style="{StaticResource HintText}" Margin="0,4,0,0" />
+        </StackPanel>
       </Grid>
+      <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+        <Button Content="查询记录" Command="{Binding SearchCommand}" Padding="16,7" />
+          <TextBlock Text="{Binding Notice}" Style="{StaticResource HintText}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="12,0,0,0" />
+      </StackPanel>
+      </StackPanel>
     </controls:SectionCard>
     <Grid Margin="0,0,0,18">
       <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
@@ -21,17 +43,35 @@
     </Grid>
     <controls:SectionCard Header="历史记录" Margin="0,0,0,18">
       <StackPanel>
-        <controls:DataTable Height="140">
+        <controls:DataTable ItemsSource="{Binding Records}" SelectedItem="{Binding SelectedRecord, Mode=TwoWay}"
+                            AutoGenerateColumns="False" IsReadOnly="True" Height="290" MinWidth="700">
           <controls:DataTable.Columns>
-            <DataGridTextColumn Header="采集时间" Width="1.3*" />
-            <DataGridTextColumn Header="设备名称" Width="1.1*" />
-            <DataGridTextColumn Header="测量指标" Width="1*" />
-            <DataGridTextColumn Header="测量值" Width="0.8*" />
-            <DataGridTextColumn Header="单位" Width="0.6*" />
-            <DataGridTextColumn Header="状态" Width="0.7*" />
+            <DataGridTextColumn Header="采集时间" Binding="{Binding TimeLocal}" Width="1.5*" />
+            <DataGridTextColumn Header="设备名称" Binding="{Binding DeviceName}" Width="1.2*" />
+            <DataGridTextColumn Header="测量指标" Binding="{Binding FieldName}" Width="1*" />
+            <DataGridTextColumn Header="测量值" Binding="{Binding ValueText}" Width="0.8*" />
+            <DataGridTextColumn Header="单位" Binding="{Binding Unit}" Width="0.6*" />
+            <DataGridTextColumn Header="来源" Binding="{Binding Source}" Width="0.6*" />
+            <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="0.8*" />
           </controls:DataTable.Columns>
         </controls:DataTable>
-        <controls:EmptyState Title="暂无历史记录" Message="数据存储功能接入后，可按设备和时间查询。" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+          <Button Content="上一页" Command="{Binding PreviousPageCommand}" Style="{StaticResource OutlineButton}" Margin="0,0,8,0" />
+          <TextBlock Text="{Binding PageNumber}" VerticalAlignment="Center" />
+          <TextBlock Text=" / " VerticalAlignment="Center" />
+          <TextBlock Text="{Binding PageCount}" VerticalAlignment="Center" />
+          <Button Content="下一页" Command="{Binding NextPageCommand}" Style="{StaticResource OutlineButton}" Margin="8,0,0,0" />
+        </StackPanel>
+      </StackPanel>
+    </controls:SectionCard>
+    <controls:SectionCard Header="所选记录详情" Margin="0,0,0,18">
+      <StackPanel>
+        <TextBlock Text="原始报文" Style="{StaticResource FieldLabel}" />
+        <TextBlock Text="{Binding SelectedRecord.RawText, TargetNullValue=请先选择记录}" TextWrapping="Wrap" FontFamily="Consolas" Margin="0,6,0,12" />
+        <TextBlock Text="解析状态 / 错误" Style="{StaticResource FieldLabel}" />
+        <TextBlock Text="{Binding SelectedRecord.ErrorText}" TextWrapping="Wrap" Margin="0,6,0,12" />
+        <TextBlock Text="采集会话 ID" Style="{StaticResource FieldLabel}" />
+        <TextBlock Text="{Binding SelectedRecord.SessionId}" TextWrapping="Wrap" Margin="0,6,0,0" />
       </StackPanel>
     </controls:SectionCard>
     <controls:SectionCard Header="数据对比图表" MinHeight="200">

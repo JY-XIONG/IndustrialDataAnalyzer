@@ -67,6 +67,7 @@ public partial class MainWindowViewModel : ObservableObject
         }
 
         CurrentPage = page;
+        if (page is OverviewViewModel overview) _ = overview.RefreshTodayAsync();
         foreach (var navigationItem in navigationItems)
         {
             navigationItem.IsSelected = navigationItem.Page == item.Page;

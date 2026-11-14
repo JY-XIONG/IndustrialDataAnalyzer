@@ -14,16 +14,18 @@ public partial class AcquisitionViewModel : PageViewModel
 {
     private const int HistoryLimit = 200;
     private readonly IDeviceManager? manager;
+    private readonly ICapturePersistence? persistence;
     private readonly object historyGate = new();
     private readonly Dictionary<Guid, Queue<ParsedFrame>> history = [];
     private readonly HashSet<Guid> dirtyDevices = [];
     private readonly DispatcherTimer? refreshTimer;
     private ParsedFrame? displayedLatest;
 
-    public AcquisitionViewModel(IDeviceManager? manager = null)
+    public AcquisitionViewModel(IDeviceManager? manager = null, ICapturePersistence? persistence = null)
         : base(NavigationPage.Acquisition, "实时数据采集", "查看设备报文、解析结果和采集记录")
     {
         this.manager = manager;
+        this.persistence = persistence;
         if (manager is not null)
         {
             manager.DevicesChanged += () => UiThread.Post(RefreshDevices);
@@ -54,6 +56,11 @@ public partial class AcquisitionViewModel : PageViewModel
     [ObservableProperty] private string latestResult = "暂无解析结果";
     [ObservableProperty] private string sendText = string.Empty;
     [ObservableProperty] private string notice = "选择设备后点击启动采集。";
+    [ObservableProperty] private string sessionStatusText = "尚未开始采集会话";
+    [ObservableProperty] private long savedCount;
+    [ObservableProperty] private long pendingSaveCount;
+    [ObservableProperty] private long lostSaveCount;
+    [ObservableProperty] private string storageWarning = string.Empty;
     [ObservableProperty] private bool isBusy;
 
     partial void OnSelectedDeviceChanged(DeviceDefinition? value)
@@ -62,6 +69,7 @@ public partial class AcquisitionViewModel : PageViewModel
         OnPropertyChanged(nameof(IsSerial));
         UpdateState();
         ShowHistory();
+        RefreshStorage();
     }
 
     [RelayCommand]
@@ -158,6 +166,7 @@ public partial class AcquisitionViewModel : PageViewModel
 
     internal void FlushPendingFrames()
     {
+        RefreshStorage();
         if (SelectedDevice is null) return;
         ParsedFrame[] snapshot;
         lock (historyGate)
@@ -166,6 +175,31 @@ public partial class AcquisitionViewModel : PageViewModel
             snapshot = [.. entries];
         }
         RenderHistory(snapshot);
+    }
+
+    private void RefreshStorage()
+    {
+        if (persistence is null || SelectedDevice is null)
+        {
+            SessionStatusText = "尚未开始采集会话";
+            SavedCount = PendingSaveCount = LostSaveCount = 0;
+            StorageWarning = persistence?.StorageError ?? string.Empty;
+            return;
+        }
+        CaptureStatus status = persistence.GetStatus(SelectedDevice.Id);
+        SessionStatusText = status.State switch
+        {
+            CaptureSessionState.Active when status.PendingCount > 0 => "采集中 · 正在写入数据库",
+            CaptureSessionState.Active => "采集中 · 存储正常",
+            CaptureSessionState.Completed => "会话已结束 · 数据已落盘",
+            CaptureSessionState.Failed => "会话异常结束",
+            CaptureSessionState.Interrupted => "会话意外中断",
+            _ => "尚未开始采集会话"
+        };
+        SavedCount = status.SavedCount;
+        PendingSaveCount = status.PendingCount;
+        LostSaveCount = status.LostCount;
+        StorageWarning = status.Error ?? string.Empty;
     }
 
     private void ShowHistory()

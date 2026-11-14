@@ -15,8 +15,10 @@ public sealed class DeviceManager : IDeviceManager, IDisposable
     private readonly ICommunicationChannelFactory factory;
     private readonly IFrameParser parser;
     private readonly ILogger<DeviceManager> logger;
+    private readonly ICapturePersistence? persistence;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<Guid, ICommunicationChannel> channels = [];
+    private readonly Dictionary<Guid, Guid> activeSessions = [];
     private readonly Channel<QueuedFrame> frameQueue;
     private readonly Task frameWorker;
     private IReadOnlyList<DeviceDefinition> devices = [];
@@ -24,12 +26,13 @@ public sealed class DeviceManager : IDeviceManager, IDisposable
     private long droppedFrames;
 
     public DeviceManager(IDeviceRepository repository, ICommunicationChannelFactory factory,
-        IFrameParser parser, ILogger<DeviceManager> logger)
+        IFrameParser parser, ILogger<DeviceManager> logger, ICapturePersistence? persistence = null)
     {
         this.repository = repository;
         this.factory = factory;
         this.parser = parser;
         this.logger = logger;
+        this.persistence = persistence;
         frameQueue = Channel.CreateBounded<QueuedFrame>(
             new BoundedChannelOptions(FrameQueueCapacity)
             {
@@ -150,18 +153,41 @@ public sealed class DeviceManager : IDeviceManager, IDisposable
             }
             await RemoveChannelAsync(id).ConfigureAwait(false);
             ICommunicationChannel channel = factory.Create(device);
-            channel.FrameReceived += frame => EnqueueFrame(frame, device.Parser, channel);
-            channel.StateChanged += PublishState;
+            Guid? sessionId;
+            try
+            {
+                sessionId = persistence is null ? null :
+                    await persistence.BeginSessionAsync(device, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                await channel.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+            channel.FrameReceived += frame =>
+            {
+                if (sessionId.HasValue) persistence!.TryAccept(sessionId.Value, frame, device.Parser);
+                EnqueueFrame(frame, device.Parser, channel);
+            };
+            channel.StateChanged += change =>
+            {
+                PublishState(change);
+                if (change.State == ConnectionState.Faulted)
+                    _ = EndFaultedSessionAsync(id, channel);
+            };
             lock (channels)
             {
                 channels[id] = channel;
             }
+            if (sessionId.HasValue) activeSessions[id] = sessionId.Value;
             try
             {
                 await channel.ConnectAsync(cancellationToken).ConfigureAwait(false);
             }
             catch
             {
+                try { await EndActiveSessionAsync(id, CaptureSessionState.Failed).ConfigureAwait(false); }
+                catch (Exception exception) { logger.LogError(exception, "Could not close failed capture session for {DeviceId}", id); }
                 if (channel.State != ConnectionState.Faulted)
                 {
                     await RemoveChannelAsync(id).ConfigureAwait(false);
@@ -208,7 +234,7 @@ public sealed class DeviceManager : IDeviceManager, IDisposable
             Guid[] ids;
             lock (channels)
             {
-                ids = [.. channels.Keys];
+                ids = [.. channels.Keys.Concat(activeSessions.Keys).Distinct()];
             }
             foreach (Guid id in ids)
             {
@@ -237,6 +263,7 @@ public sealed class DeviceManager : IDeviceManager, IDisposable
         await DisconnectAllAsync().ConfigureAwait(false);
         frameQueue.Writer.TryComplete();
         await frameWorker.ConfigureAwait(false);
+        if (persistence is not null) await persistence.DisposeAsync().ConfigureAwait(false);
         disposed = true;
         gate.Dispose();
     }
@@ -246,9 +273,12 @@ public sealed class DeviceManager : IDeviceManager, IDisposable
     private async Task RemoveChannelAsync(Guid id)
     {
         ICommunicationChannel? channel;
+        CaptureSessionState finalState;
         lock (channels)
         {
             channels.TryGetValue(id, out channel);
+            finalState = channel?.State == ConnectionState.Faulted
+                ? CaptureSessionState.Failed : CaptureSessionState.Completed;
         }
         if (channel is not null)
         {
@@ -259,6 +289,27 @@ public sealed class DeviceManager : IDeviceManager, IDisposable
                     channels.Remove(id);
             }
         }
+        await EndActiveSessionAsync(id, finalState).ConfigureAwait(false);
+    }
+
+    private async Task EndActiveSessionAsync(Guid id, CaptureSessionState state)
+    {
+        if (persistence is null || !activeSessions.TryGetValue(id, out Guid sessionId)) return;
+        await persistence.EndSessionAsync(sessionId, state).ConfigureAwait(false);
+        activeSessions.Remove(id);
+    }
+
+    private async Task EndFaultedSessionAsync(Guid id, ICommunicationChannel channel)
+    {
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            lock (channels)
+                if (!channels.TryGetValue(id, out ICommunicationChannel? current) || !ReferenceEquals(current, channel)) return;
+            await EndActiveSessionAsync(id, CaptureSessionState.Failed).ConfigureAwait(false);
+        }
+        catch (Exception exception) { logger.LogError(exception, "Could not close faulted capture session for {DeviceId}", id); }
+        finally { gate.Release(); }
     }
 
     private void EnqueueFrame(RawFrame raw, ParserOptions options, ICommunicationChannel channel)

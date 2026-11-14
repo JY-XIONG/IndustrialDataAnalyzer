@@ -19,6 +19,13 @@
         <StackPanel>
           <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" TextWrapping="Wrap" />
           <TextBlock Text="{Binding Notice}" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,8,0,0" />
+          <TextBlock Text="{Binding SessionStatusText}" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,8,0,0" />
+          <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+            <TextBlock Text="已保存 " Style="{StaticResource HintText}" /><TextBlock Text="{Binding SavedCount}" />
+            <TextBlock Text="  待写 " Style="{StaticResource HintText}" /><TextBlock Text="{Binding PendingSaveCount}" />
+            <TextBlock Text="  丢失 " Style="{StaticResource HintText}" /><TextBlock Text="{Binding LostSaveCount}" />
+          </StackPanel>
+          <TextBlock Text="{Binding StorageWarning}" Foreground="#C2410C" TextWrapping="Wrap" Margin="0,6,0,0" />
         </StackPanel>
       </controls:SectionCard>
     </Grid>

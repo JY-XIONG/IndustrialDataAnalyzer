@@ -30,6 +30,7 @@ dotnet run --project src/IndustrialDataAnalyzer.App/IndustrialDataAnalyzer.App.c
 dotnet run --project src/IndustrialDataAnalyzer.App/IndustrialDataAnalyzer.App.csproj -- --capture-editor .test-temp/phase2-ui/editor.png
 dotnet run --project src/IndustrialDataAnalyzer.App/IndustrialDataAnalyzer.App.csproj -- --capture-editor .test-temp/phase2-ui/serial-editor.png --serial
 dotnet run --project src/IndustrialDataAnalyzer.App/IndustrialDataAnalyzer.App.csproj -- --capture-demo .test-temp/phase2-ui/demo --min-size
+dotnet run --project src/IndustrialDataAnalyzer.App/IndustrialDataAnalyzer.App.csproj -- --capture-storage-demo .test-temp/phase3-ui/storage --min-size
 ```
 
 ## 当前环境的 NuGet TLS 问题
@@ -64,4 +65,10 @@ dotnet test IndustrialDataAnalyzer.slnx -c Debug --no-build --no-restore -p:Rest
 
 本阶段增加了设备 CRUD/JSON 持久化、串口与模拟统一通道、报文组装、数值解析及页面联动。测试覆盖配置重启恢复与备份、设备编号唯一性、模拟设备持续输出和停止、拆包粘包、UTF-8 跨块接收及三种解析方式。实际构建和测试结果见 [第二阶段验收报告](SECOND_STAGE_ACCEPTANCE.md)。
 
-不要把用户数据写到应用目录，也不要在 UI 线程同步等待异步任务。真实设备协议、驱动和拔插行为须在目标 Windows 机器上联机验证。SQLite 测量存储、历史分析、曲线、报警和报表尚未实现。
+不要把用户数据写到应用目录，也不要在 UI 线程同步等待异步任务。真实设备协议、驱动和拔插行为须在目标 Windows 机器上联机验证。
+
+## 第三阶段开发与验证
+
+测量数据库位于 `%LocalAppData%\IndustrialDataAnalyzer\measurements.db`，设备配置仍为 `devices.json`。`--capture-storage-demo` 只在 Debug 构建中使用，在截图目录的 `.local-data` 内创建隔离数据库、采集模拟数据并截图采集、总览和历史页面；不会写入正式用户数据。数据库表、写入队列、恢复文件和查询说明见 [架构说明](ARCHITECTURE.md)，实际结果见 [第三阶段验收报告](THIRD_STAGE_ACCEPTANCE.md)。
+
+[Microsoft.Data.Sqlite 官方说明](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/async)指出其 ADO.NET 异步方法内部仍执行同步 SQLite I/O，因此仓储方法将数据库工作放到后台任务，采集回调不等待数据库；界面只使用异步调用。正常停止等待已接受数据提交，数据库持续故障时显示待写与丢失数量，退出时转存待写报文，重启后回放。真实 COM 仪器、驱动及长期压力仍须现场验证。实时曲线、统计分析、报警和报表没有开发。

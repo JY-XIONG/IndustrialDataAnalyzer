@@ -38,7 +38,17 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
         try
         {
-            var paths = new ApplicationPaths(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+            string localDataRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+#if DEBUG
+            if (e.Args.Length >= 2 && e.Args[0].StartsWith("--capture-", StringComparison.Ordinal))
+            {
+                string captureFolder = e.Args[0] == "--capture-editor"
+                    ? Path.GetDirectoryName(Path.GetFullPath(e.Args[1]))!
+                    : Path.GetFullPath(e.Args[1]);
+                localDataRoot = Path.Combine(captureFolder, ".local-data");
+            }
+#endif
+            var paths = new ApplicationPaths(localDataRoot);
             paths.Initialize();
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Information()
@@ -58,6 +68,8 @@ public partial class App : System.Windows.Application
                 {
                     services.AddSingleton<IApplicationPaths>(paths);
                     services.AddSingleton<IDeviceRepository, JsonDeviceRepository>();
+                    services.AddSingleton<IMeasurementRepository, SqliteMeasurementRepository>();
+                    services.AddSingleton<ICapturePersistence, CapturePersistenceService>();
                     services.AddSingleton<IFrameParser, FrameParser>();
                     services.AddSingleton<ICommunicationChannelFactory, CommunicationChannelFactory>();
                     services.AddSingleton<IPortCatalog, SerialPortCatalog>();
@@ -80,6 +92,7 @@ public partial class App : System.Windows.Application
                 }).Build();
 
             await host.StartAsync();
+            await host.Services.GetRequiredService<ICapturePersistence>().InitializeAsync();
             await host.Services.GetRequiredService<IDeviceManager>().InitializeAsync();
             MainWindow = host.Services.GetRequiredService<MainWindow>();
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -120,8 +133,10 @@ public partial class App : System.Windows.Application
                 dialog.Close();
                 await ShutdownApplicationAsync();
             }
-            else if ((e.Args.Length == 2 || e.Args.Length == 3) && e.Args[0] == "--capture-demo")
+            else if ((e.Args.Length == 2 || e.Args.Length == 3) &&
+                e.Args[0] is "--capture-demo" or "--capture-storage-demo")
             {
+                bool withStorage = e.Args[0] == "--capture-storage-demo";
                 if (e.Args.Length == 3 && e.Args[2] == "--min-size")
                 {
                     MainWindow.Width = MainWindow.MinWidth;
@@ -129,9 +144,13 @@ public partial class App : System.Windows.Application
                 }
                 Directory.CreateDirectory(e.Args[1]);
                 var demoRepository = new CaptureDeviceRepository();
+                var demoStore = withStorage ? new SqliteMeasurementRepository(paths) : null;
+                var demoPersistence = withStorage ? new CapturePersistenceService(demoStore!, new FrameParser(), paths,
+                    NullLogger<CapturePersistenceService>.Instance) : null;
+                if (demoPersistence is not null) await demoPersistence.InitializeAsync();
                 await using var demo = new DeviceManager(demoRepository,
                     new CommunicationChannelFactory(NullLoggerFactory.Instance), new FrameParser(),
-                    NullLogger<DeviceManager>.Instance);
+                    NullLogger<DeviceManager>.Instance, demoPersistence);
                 await demo.InitializeAsync();
                 var device = new DeviceDefinition
                 {
@@ -142,9 +161,10 @@ public partial class App : System.Windows.Application
                 await demo.UpsertAsync(device);
                 PageViewModel[] pages = [.. host.Services.GetServices<PageViewModel>().Select(page => page.Page switch
                 {
-                    NavigationPage.Overview => new OverviewViewModel(demo),
+                    NavigationPage.Overview => new OverviewViewModel(demo, demoStore),
                     NavigationPage.Devices => new DevicesViewModel(demo),
-                    NavigationPage.Acquisition => new AcquisitionViewModel(demo),
+                    NavigationPage.Acquisition => new AcquisitionViewModel(demo, demoPersistence),
+                    NavigationPage.History when withStorage => new HistoryViewModel(demoStore),
                     _ => page
                 })];
                 var preview = new MainWindowViewModel(pages, host.Services.GetRequiredService<IApplicationInfo>(), demo);
@@ -156,7 +176,17 @@ public partial class App : System.Windows.Application
                 preview.NavigateCommand.Execute(preview.DeviceItems[1]);
                 await Dispatcher.InvokeAsync(() => SaveWindowSnapshot(MainWindow, Path.Combine(e.Args[1], "acquisition-with-data.png")), DispatcherPriority.ApplicationIdle);
                 preview.NavigateCommand.Execute(preview.WorkspaceItems[0]);
+                if (withStorage) await ((OverviewViewModel)pages.Single(page => page.Page == NavigationPage.Overview)).RefreshTodayAsync();
                 await Dispatcher.InvokeAsync(() => SaveWindowSnapshot(MainWindow, Path.Combine(e.Args[1], "overview-with-data.png")), DispatcherPriority.ApplicationIdle);
+                if (withStorage)
+                {
+                    await demo.DisconnectAsync(device.Id);
+                    preview.NavigateCommand.Execute(preview.DataItems[0]);
+                    var history = (HistoryViewModel)pages.Single(page => page.Page == NavigationPage.History);
+                    await history.SearchCommand.ExecuteAsync(null);
+                    await Dispatcher.InvokeAsync(() => SaveWindowSnapshot(MainWindow,
+                        Path.Combine(e.Args[1], "history-with-data.png")), DispatcherPriority.ApplicationIdle);
+                }
                 await ShutdownApplicationAsync();
             }
 #endif

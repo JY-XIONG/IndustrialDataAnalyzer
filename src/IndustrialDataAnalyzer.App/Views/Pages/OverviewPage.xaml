@@ -11,6 +11,12 @@
       <controls:MetricCard Grid.Column="2" Title="本次运行报文" Value="{Binding SessionFrames}" Note="仅保留在当前运行期间" Margin="0,0,12,0" />
       <controls:MetricCard Grid.Column="3" Title="未处理报警" Value="0" Note="暂无报警记录" />
     </Grid>
+    <controls:SectionCard Header="今日已保存数据量" Margin="0,0,0,18">
+      <StackPanel Orientation="Horizontal">
+        <TextBlock Text="{Binding TodaySavedCount}" FontSize="24" FontWeight="SemiBold" Margin="0,0,12,0" />
+        <TextBlock Text="{Binding TodayStorageNotice}" Style="{StaticResource HintText}" VerticalAlignment="Center" TextWrapping="Wrap" />
+      </StackPanel>
+    </controls:SectionCard>
     <Grid Margin="0,0,0,18">
       <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*" /><ColumnDefinition Width="1.35*" /></Grid.ColumnDefinitions>
       <controls:SectionCard Header="设备运行状态" Margin="0,0,9,0" MinHeight="190">
