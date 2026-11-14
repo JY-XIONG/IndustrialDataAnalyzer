@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Windows;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using IndustrialDataAnalyzer.Core.Abstractions;
@@ -10,8 +12,13 @@ namespace IndustrialDataAnalyzer.App.ViewModels.Pages;
 /// <summary>Displays bounded live raw frames and parsed results for a selected device.</summary>
 public partial class AcquisitionViewModel : PageViewModel
 {
+    private const int HistoryLimit = 200;
     private readonly IDeviceManager? manager;
-    private readonly Dictionary<Guid, List<ParsedFrame>> history = [];
+    private readonly object historyGate = new();
+    private readonly Dictionary<Guid, Queue<ParsedFrame>> history = [];
+    private readonly HashSet<Guid> dirtyDevices = [];
+    private readonly DispatcherTimer? refreshTimer;
+    private ParsedFrame? displayedLatest;
 
     public AcquisitionViewModel(IDeviceManager? manager = null)
         : base(NavigationPage.Acquisition, "实时数据采集", "查看设备报文、解析结果和采集记录")
@@ -21,8 +28,17 @@ public partial class AcquisitionViewModel : PageViewModel
         {
             manager.DevicesChanged += () => UiThread.Post(RefreshDevices);
             manager.StateChanged += change => UiThread.Post(() => OnState(change));
-            manager.FrameProcessed += frame => UiThread.Post(() => OnFrame(frame));
+            manager.FrameProcessed += OnFrame;
             RefreshDevices();
+            if (Application.Current?.Dispatcher is Dispatcher dispatcher)
+            {
+                refreshTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+                {
+                    Interval = TimeSpan.FromMilliseconds(100)
+                };
+                refreshTimer.Tick += (_, _) => FlushPendingFrames();
+                refreshTimer.Start();
+            }
         }
     }
 
@@ -88,6 +104,12 @@ public partial class AcquisitionViewModel : PageViewModel
         Guid? selectedId = SelectedDevice?.Id;
         Devices.Clear();
         foreach (DeviceDefinition device in manager.Devices) Devices.Add(device);
+        lock (historyGate)
+        {
+            var active = manager.Devices.Select(device => device.Id).ToHashSet();
+            foreach (Guid id in history.Keys.Where(id => !active.Contains(id)).ToArray()) history.Remove(id);
+            dirtyDevices.RemoveWhere(id => !active.Contains(id));
+        }
         SelectedDevice = Devices.FirstOrDefault(device => device.Id == selectedId) ?? Devices.FirstOrDefault();
         UpdateState();
     }
@@ -116,43 +138,90 @@ public partial class AcquisitionViewModel : PageViewModel
 
     private void OnFrame(ParsedFrame frame)
     {
-        if (!history.TryGetValue(frame.Raw.DeviceId, out List<ParsedFrame>? entries))
+        lock (historyGate)
         {
-            entries = [];
-            history[frame.Raw.DeviceId] = entries;
+            if (!history.TryGetValue(frame.Raw.DeviceId, out Queue<ParsedFrame>? entries))
+            {
+                entries = new Queue<ParsedFrame>(HistoryLimit);
+                history[frame.Raw.DeviceId] = entries;
+            }
+            if (entries.Count == HistoryLimit) entries.Dequeue();
+            entries.Enqueue(frame);
+            dirtyDevices.Add(frame.Raw.DeviceId);
         }
-        entries.Add(frame);
-        if (entries.Count > 200) entries.RemoveAt(0);
-        if (SelectedDevice?.Id == frame.Raw.DeviceId)
+    }
+
+    internal int StoredFrameCount(Guid id)
+    {
+        lock (historyGate) return history.TryGetValue(id, out Queue<ParsedFrame>? entries) ? entries.Count : 0;
+    }
+
+    internal void FlushPendingFrames()
+    {
+        if (SelectedDevice is null) return;
+        ParsedFrame[] snapshot;
+        lock (historyGate)
         {
-            RecentFrames.Insert(0, new FrameDisplay(frame));
-            if (RecentFrames.Count > 50) RecentFrames.RemoveAt(50);
-            UpdateLatest(entries);
+            if (!dirtyDevices.Remove(SelectedDevice.Id) || !history.TryGetValue(SelectedDevice.Id, out Queue<ParsedFrame>? entries)) return;
+            snapshot = [.. entries];
         }
+        RenderHistory(snapshot);
     }
 
     private void ShowHistory()
     {
+        displayedLatest = null;
         RecentFrames.Clear();
-        if (SelectedDevice is null || !history.TryGetValue(SelectedDevice.Id, out List<ParsedFrame>? entries) || entries.Count == 0)
+        if (SelectedDevice is null)
         {
             LatestValue = "—"; LatestField = "暂无测量值"; LatestRaw = "暂无报文"; LatestResult = "暂无解析结果";
             return;
         }
-        foreach (ParsedFrame entry in entries.TakeLast(50).Reverse()) RecentFrames.Add(new FrameDisplay(entry));
-        UpdateLatest(entries);
+        ParsedFrame[] snapshot;
+        lock (historyGate)
+        {
+            snapshot = history.TryGetValue(SelectedDevice.Id, out Queue<ParsedFrame>? entries) ? [.. entries] : [];
+            dirtyDevices.Remove(SelectedDevice.Id);
+        }
+        if (snapshot.Length == 0)
+        {
+            LatestValue = "—"; LatestField = "暂无测量值"; LatestRaw = "暂无报文"; LatestResult = "暂无解析结果";
+            return;
+        }
+        RenderHistory(snapshot);
     }
 
-    private void UpdateLatest(List<ParsedFrame> entries)
+    private void RenderHistory(ParsedFrame[] entries)
     {
+        int previousIndex = displayedLatest is null ? -1 : Array.FindLastIndex(entries, entry => ReferenceEquals(entry, displayedLatest));
+        if (displayedLatest is not null && previousIndex < 0)
+        {
+            RecentFrames.Clear();
+        }
+        int start = Math.Max(previousIndex + 1, entries.Length - 50);
+        for (int index = start; index < entries.Length; index++)
+        {
+            RecentFrames.Insert(0, new FrameDisplay(entries[index]));
+        }
+        while (RecentFrames.Count > 50) RecentFrames.RemoveAt(50);
+        displayedLatest = entries[^1];
         ParsedFrame latest = entries[^1];
         LatestRaw = $"[{latest.Raw.Timestamp:HH:mm:ss.fff}] [{(latest.Raw.Source == FrameSource.Simulator ? "模拟" : "串口")}] {latest.Raw.Text}";
         LatestResult = latest.IsSuccess
             ? $"{latest.FieldName}: {latest.Value?.ToString("G", CultureInfo.InvariantCulture)} {latest.Unit}"
             : "解析失败：" + latest.Error;
-        ParsedFrame? successful = entries.LastOrDefault(entry => entry.IsSuccess);
-        LatestValue = successful?.Value?.ToString("G", CultureInfo.InvariantCulture) ?? "—";
-        LatestField = successful is null ? "暂无测量值" : $"{successful.FieldName} {successful.Unit}";
+        if (latest.IsSuccess)
+        {
+            LatestValue = latest.Value!.Value.ToString("G", CultureInfo.InvariantCulture);
+            LatestField = $"{latest.FieldName} {latest.Unit}";
+        }
+        else
+        {
+            ParsedFrame? previous = entries.LastOrDefault(entry => entry.IsSuccess);
+            LatestValue = "无效";
+            LatestField = previous is null ? "当前数据无效 · 尚无有效值" :
+                $"当前数据无效 · 上次有效 {previous.Value?.ToString("G", CultureInfo.InvariantCulture)} {previous.Unit} · {previous.Raw.Timestamp:HH:mm:ss}";
+        }
     }
 }
 

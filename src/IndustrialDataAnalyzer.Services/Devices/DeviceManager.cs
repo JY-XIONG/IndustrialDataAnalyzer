@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Channels;
 using IndustrialDataAnalyzer.Core.Abstractions;
 using IndustrialDataAnalyzer.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -7,16 +8,46 @@ using Microsoft.Extensions.Logging;
 namespace IndustrialDataAnalyzer.Services.Devices;
 
 /// <summary>Coordinates validated configuration, connections, and parsed frames.</summary>
-public sealed class DeviceManager(
-    IDeviceRepository repository,
-    ICommunicationChannelFactory factory,
-    IFrameParser parser,
-    ILogger<DeviceManager> logger) : IDeviceManager, IDisposable
+public sealed class DeviceManager : IDeviceManager, IDisposable
 {
+    private const int FrameQueueCapacity = 4096;
+    private readonly IDeviceRepository repository;
+    private readonly ICommunicationChannelFactory factory;
+    private readonly IFrameParser parser;
+    private readonly ILogger<DeviceManager> logger;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<Guid, ICommunicationChannel> channels = [];
+    private readonly Channel<QueuedFrame> frameQueue;
+    private readonly Task frameWorker;
     private IReadOnlyList<DeviceDefinition> devices = [];
     private bool disposed;
+    private long droppedFrames;
+
+    public DeviceManager(IDeviceRepository repository, ICommunicationChannelFactory factory,
+        IFrameParser parser, ILogger<DeviceManager> logger)
+    {
+        this.repository = repository;
+        this.factory = factory;
+        this.parser = parser;
+        this.logger = logger;
+        frameQueue = Channel.CreateBounded<QueuedFrame>(
+            new BoundedChannelOptions(FrameQueueCapacity)
+            {
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+                SingleWriter = false,
+                AllowSynchronousContinuations = false
+            }, _ =>
+            {
+                long dropped = Interlocked.Increment(ref droppedFrames);
+                if (dropped == 1 || dropped % 1000 == 0)
+                    logger.LogWarning("Frame queue full; {Dropped} oldest frames discarded", dropped);
+            });
+        frameWorker = Task.Run(ProcessFramesAsync);
+    }
+
+    public int PendingFrameCount => frameQueue.Reader.Count;
+    public long DroppedFrameCount => Interlocked.Read(ref droppedFrames);
 
     public event Action? DevicesChanged;
     public event Action<DeviceStateChange>? StateChanged;
@@ -119,7 +150,7 @@ public sealed class DeviceManager(
             }
             await RemoveChannelAsync(id).ConfigureAwait(false);
             ICommunicationChannel channel = factory.Create(device);
-            channel.FrameReceived += frame => OnFrame(frame, device.Parser);
+            channel.FrameReceived += frame => EnqueueFrame(frame, device.Parser, channel);
             channel.StateChanged += PublishState;
             lock (channels)
             {
@@ -204,6 +235,8 @@ public sealed class DeviceManager(
             return;
         }
         await DisconnectAllAsync().ConfigureAwait(false);
+        frameQueue.Writer.TryComplete();
+        await frameWorker.ConfigureAwait(false);
         disposed = true;
         gate.Dispose();
     }
@@ -228,7 +261,38 @@ public sealed class DeviceManager(
         }
     }
 
-    private void OnFrame(RawFrame raw, ParserOptions options)
+    private void EnqueueFrame(RawFrame raw, ParserOptions options, ICommunicationChannel channel)
+    {
+        if (channel.State == ConnectionState.Connected)
+        {
+            frameQueue.Writer.TryWrite(new QueuedFrame(raw, options, channel));
+        }
+    }
+
+    private async Task ProcessFramesAsync()
+    {
+        await foreach (QueuedFrame queued in frameQueue.Reader.ReadAllAsync().ConfigureAwait(false))
+        {
+            lock (channels)
+            {
+                if (!channels.TryGetValue(queued.Raw.DeviceId, out ICommunicationChannel? current) ||
+                    !ReferenceEquals(current, queued.Channel) || current.State != ConnectionState.Connected)
+                {
+                    continue;
+                }
+            }
+            try
+            {
+                ProcessFrame(queued.Raw, queued.Options);
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "Frame processing failed for {DeviceId}", queued.Raw.DeviceId);
+            }
+        }
+    }
+
+    private void ProcessFrame(RawFrame raw, ParserOptions options)
     {
         ParsedFrame result = parser.Parse(raw, options);
         if (!result.IsSuccess)
@@ -238,7 +302,7 @@ public sealed class DeviceManager(
         }
         else
         {
-            logger.LogInformation("Frame {Source} from {DeviceId}: {Raw} => {Field}={Value}{Unit}",
+            logger.LogDebug("Frame {Source} from {DeviceId}: {Raw} => {Field}={Value}{Unit}",
                 raw.Source, raw.DeviceId, raw.Text.Length > 512 ? raw.Text[..512] + "…" : raw.Text,
                 result.FieldName, result.Value, result.Unit);
         }
@@ -317,4 +381,6 @@ public sealed class DeviceManager(
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
+
+    private sealed record QueuedFrame(RawFrame Raw, ParserOptions Options, ICommunicationChannel Channel);
 }

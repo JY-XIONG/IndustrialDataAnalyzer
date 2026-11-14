@@ -23,10 +23,11 @@
       </controls:SectionCard>
     </Grid>
     <controls:SectionCard Header="实时测量值" Margin="0,0,0,18" MinHeight="115">
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+      <Grid VerticalAlignment="Center">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
         <TextBlock Text="{Binding LatestValue}" FontSize="34" FontWeight="SemiBold" Margin="0,0,14,0" />
-        <TextBlock Text="{Binding LatestField}" Style="{StaticResource HintText}" VerticalAlignment="Bottom" Margin="0,0,0,8" />
-      </StackPanel>
+        <TextBlock Grid.Column="1" Text="{Binding LatestField}" Style="{StaticResource HintText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+      </Grid>
     </controls:SectionCard>
     <Grid Margin="0,0,0,18">
       <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>

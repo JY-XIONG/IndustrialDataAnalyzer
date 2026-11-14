@@ -2,6 +2,7 @@ using System.IO;
 using System.Globalization;
 using IndustrialDataAnalyzer.Core.Abstractions;
 using IndustrialDataAnalyzer.Core.Models;
+using IndustrialDataAnalyzer.App.ViewModels.Pages;
 using IndustrialDataAnalyzer.Infrastructure.Communication;
 using IndustrialDataAnalyzer.Infrastructure.Paths;
 using IndustrialDataAnalyzer.Infrastructure.Persistence;
@@ -148,6 +149,40 @@ public sealed class DeviceManagerTests
             Assert.Equal(ConnectionState.Connected, manager.GetState(device.Id));
             Assert.Contains(ConnectionState.Faulted, states);
             Assert.Contains(ConnectionState.Connected, states);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HighFrequencySimulatorsKeepAcquisitionHistoryBounded()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "IndustrialDataAnalyzer.Tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var repository = new JsonDeviceRepository(new ApplicationPaths(root), NullLogger<JsonDeviceRepository>.Instance);
+            await using var manager = CreateManager(repository);
+            await manager.InitializeAsync();
+            DeviceDefinition[] devices = Enumerable.Range(0, 12).Select(index => Device($"Simulator {index}", $"S{index}") with
+            {
+                Simulator = new SimulatorOptions { IntervalMilliseconds = 50 }
+            }).ToArray();
+            foreach (DeviceDefinition device in devices) await manager.UpsertAsync(device);
+            var page = new AcquisitionViewModel(manager);
+            int received = 0;
+            manager.FrameProcessed += _ => Interlocked.Increment(ref received);
+            foreach (DeviceDefinition device in devices) await manager.ConnectAsync(device.Id);
+
+            await Task.Delay(650);
+            page.FlushPendingFrames();
+
+            Assert.True(Volatile.Read(ref received) >= 30);
+            Assert.InRange(manager.PendingFrameCount, 0, 4096);
+            Assert.InRange(page.StoredFrameCount(devices[0].Id), 1, 200);
+            Assert.InRange(page.RecentFrames.Count, 1, 50);
+            await manager.DisconnectAllAsync();
         }
         finally
         {

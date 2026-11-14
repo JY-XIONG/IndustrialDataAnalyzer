@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Windows;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using IndustrialDataAnalyzer.Core.Abstractions;
 using IndustrialDataAnalyzer.Core.Models;
@@ -9,6 +11,10 @@ namespace IndustrialDataAnalyzer.App.ViewModels.Pages;
 public partial class OverviewViewModel : PageViewModel
 {
     private readonly IDeviceManager? manager;
+    private readonly object frameGate = new();
+    private long pendingFrames;
+    private ParsedFrame? pendingLatest;
+    private readonly DispatcherTimer? refreshTimer;
 
     public OverviewViewModel(IDeviceManager? manager = null)
         : base(NavigationPage.Overview, "系统总览", "查看设备、采集和报警的整体情况")
@@ -18,8 +24,17 @@ public partial class OverviewViewModel : PageViewModel
         {
             manager.DevicesChanged += () => UiThread.Post(Refresh);
             manager.StateChanged += _ => UiThread.Post(Refresh);
-            manager.FrameProcessed += frame => UiThread.Post(() => OnFrame(frame));
+            manager.FrameProcessed += OnFrame;
             Refresh();
+            if (Application.Current?.Dispatcher is Dispatcher dispatcher)
+            {
+                refreshTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+                {
+                    Interval = TimeSpan.FromMilliseconds(200)
+                };
+                refreshTimer.Tick += (_, _) => FlushPendingFrames();
+                refreshTimer.Start();
+            }
         }
     }
 
@@ -28,7 +43,7 @@ public partial class OverviewViewModel : PageViewModel
     [ObservableProperty] private int disconnectedDevices;
     [ObservableProperty] private int faultedDevices;
     [ObservableProperty] private string statusSummary = "暂无设备状态";
-    [ObservableProperty] private int sessionFrames;
+    [ObservableProperty] private long sessionFrames;
     [ObservableProperty] private string latestFrameSummary = "暂无采集记录";
     public ObservableCollection<string> DeviceStatusLines { get; } = [];
 
@@ -59,7 +74,26 @@ public partial class OverviewViewModel : PageViewModel
 
     private void OnFrame(ParsedFrame frame)
     {
-        SessionFrames++;
+        lock (frameGate)
+        {
+            pendingFrames++;
+            pendingLatest = frame;
+        }
+    }
+
+    internal void FlushPendingFrames()
+    {
+        long count;
+        ParsedFrame? frame;
+        lock (frameGate)
+        {
+            count = pendingFrames;
+            frame = pendingLatest;
+            pendingFrames = 0;
+            pendingLatest = null;
+        }
+        if (count == 0 || frame is null) return;
+        SessionFrames += count;
         string name = manager?.Devices.FirstOrDefault(device => device.Id == frame.Raw.DeviceId)?.Name ?? "设备";
         LatestFrameSummary = frame.IsSuccess
             ? $"{frame.Raw.Timestamp:HH:mm:ss} · {name} · {frame.FieldName} {frame.Value:G} {frame.Unit}"

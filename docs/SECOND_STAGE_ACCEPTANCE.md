@@ -68,3 +68,22 @@ dotnet test IndustrialDataAnalyzer.slnx -c Debug --no-build --no-restore -p:Rest
 5. **第三阶段功能**：SQLite 测量存储、历史分析、实时曲线、报警规则及报表导出没有开发。运行期原始/解析记录在内存中，每台设备保留最近 200 条，退出后清除。
 
 **验收结论：** 第二阶段软件实现、模拟设备流程、页面运行、编译和自动化测试通过；真实串口设备联机项待现场验证。未进入第三阶段。
+
+## 第二阶段稳定性修复复验（2026-11-14）
+
+本节记录第二阶段代码在 GitHub 当前 `main` 基线之上的稳定性修复；前文的 37 项测试结果是修复前的历史记录。
+
+| 项目 | 修复与验证 |
+| --- | --- |
+| 高频采集 | 通道回调只入队；单消费者后台解析，待处理队列上限 4096 条，满时丢弃最旧报文并记录丢弃计数。采集页按设备保留最近 200 条、显示最近 50 条，每 100 ms 批量刷新；总览每 200 ms 批量刷新。测试覆盖 6000 条突发报文与 12 台 50 ms 间隔模拟设备。 |
+| 最新测量值 | 最新报文解析失败时显示“无效”和失败原因；近期有上次有效值时注明该值及时间。原始报文和近期记录仍保留。xUnit 覆盖成功后失败及高频批量显示。 |
+| 串口生命周期 | 发送与断开同步；发送超时或读写异常会关闭会话并标记异常。并发断开只释放一次资源；重连等待上次关闭完成。测试以可控串口传输替身覆盖并发发送/断开、超时、重复连接、读写故障和恢复。 |
+| 兼容性 | 设备模型与 JSON 格式、Core/Services/Infrastructure/App 分层、八页导航和现有视觉样式未改动；原设备管理、模拟、解析及配置测试继续通过。 |
+
+本机先尝试官方源 `dotnet restore IndustrialDataAnalyzer.slnx --ignore-failed-sources`，因本机 HTTPS/TLS 无法读取 NuGet 漏洞信息，返回 `NU1900`、退出码 1。随后仅对本地还原使用仓库已有的 `scripts/nuget_proxy.py` 与 `scripts/NuGet.Local.config`，五个项目全部还原成功，退出码 0；没有禁用安全审计。CI 仍直接使用官方 NuGet 源。
+
+最终执行 `dotnet build IndustrialDataAnalyzer.slnx -c Debug --no-restore -p:RestorePackagesPath=D:\Projects\IndustrialDataAnalyzer\.packages`：退出码 0，**0 警告、0 错误**。执行 `dotnet test IndustrialDataAnalyzer.slnx -c Debug --no-build --no-restore -p:RestorePackagesPath=D:\Projects\IndustrialDataAnalyzer\.packages`：退出码 0，**46/46 通过，0 跳过**。最小尺寸 1120×720 的模拟采集页已实际运行并捕获截图至 `.test-temp/stability-ui/demo/`，可见最新测量值、原始报文、解析结果和滚动区域，无卡片重叠。GitHub Actions 结果以本次推送对应的远端运行记录为准。
+
+本轮修改文件：`src/IndustrialDataAnalyzer.Services/Devices/DeviceManager.cs`；`src/IndustrialDataAnalyzer.Infrastructure/Communication/SerialDeviceChannel.cs`、`SerialPortTransport.cs`、`AssemblyInfo.cs`；`src/IndustrialDataAnalyzer.App/AssemblyInfo.cs`、`ViewModels/Pages/AcquisitionViewModel.cs`、`OverviewViewModel.cs`、`Views/Pages/AcquisitionPage.xaml`；`tests/IndustrialDataAnalyzer.Tests/AcquisitionViewModelTests.cs`、`DeviceManagerTests.cs`、`BoundedFrameQueueTests.cs`、`SerialDeviceChannelTests.cs`；本报告与 `docs/DEVICE_COMMUNICATION.md`。
+
+未验证：真实仪器和目标 COM 驱动下的发送超时、拔插及长时间高频运行仍需现场联调。队列溢出时会主动丢弃旧的待处理报文，不能保证每条报文都进入界面记录。第三阶段功能未开发。

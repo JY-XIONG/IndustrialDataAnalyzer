@@ -15,10 +15,12 @@ public sealed class AcquisitionViewModelTests
         var viewModel = new AcquisitionViewModel(manager);
 
         manager.Emit(first.Id, "21.5");
+        viewModel.FlushPendingFrames();
         Assert.Contains("21.5", viewModel.LatestRaw);
         viewModel.SelectedDevice = second;
         Assert.Equal("暂无报文", viewModel.LatestRaw);
         manager.Emit(second.Id, "3.2");
+        viewModel.FlushPendingFrames();
         Assert.Contains("3.2", viewModel.LatestRaw);
         viewModel.SelectedDevice = first;
         Assert.Contains("21.5", viewModel.LatestRaw);
@@ -26,6 +28,41 @@ public sealed class AcquisitionViewModelTests
 
         await viewModel.StopCommand.ExecuteAsync(null);
         Assert.Contains("未连接", viewModel.StatusText);
+    }
+
+    [Fact]
+    public void LatestFailedFrameIsShownAsInvalidWithPreviousValueAndTime()
+    {
+        DeviceDefinition device = new() { Id = Guid.NewGuid(), Name = "温度", Code = "T", Kind = DeviceKind.Simulator };
+        var manager = new FakeManager(device);
+        var viewModel = new AcquisitionViewModel(manager);
+        DateTimeOffset validTime = new(2026, 11, 14, 8, 9, 10, TimeSpan.Zero);
+        manager.Emit(device.Id, "21.5", 21.5, null, validTime);
+        manager.Emit(device.Id, "bad", null, "不是数字", validTime.AddSeconds(1));
+
+        viewModel.FlushPendingFrames();
+
+        Assert.Equal("无效", viewModel.LatestValue);
+        Assert.Contains("21.5", viewModel.LatestField);
+        Assert.Contains("08:09:10", viewModel.LatestField);
+        Assert.Contains("解析失败", viewModel.LatestResult);
+        Assert.Contains("bad", viewModel.LatestRaw);
+        Assert.Equal(2, viewModel.RecentFrames.Count);
+    }
+
+    [Fact]
+    public void HighFrequencyFramesStayBoundedUntilBatchRefresh()
+    {
+        DeviceDefinition device = new() { Id = Guid.NewGuid(), Name = "重量", Code = "W", Kind = DeviceKind.Simulator };
+        var manager = new FakeManager(device);
+        var viewModel = new AcquisitionViewModel(manager);
+        for (int index = 0; index < 10_000; index++) manager.Emit(device.Id, index.ToString());
+
+        Assert.Equal(200, viewModel.StoredFrameCount(device.Id));
+        Assert.Empty(viewModel.RecentFrames);
+        viewModel.FlushPendingFrames();
+        Assert.Equal("9999", viewModel.LatestValue);
+        Assert.Equal(50, viewModel.RecentFrames.Count);
     }
 
     private sealed class FakeManager(params DeviceDefinition[] devices) : IDeviceManager
@@ -52,10 +89,12 @@ public sealed class AcquisitionViewModelTests
         public Task SendAsync(Guid id, string text, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task DisconnectAllAsync() => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-        public void Emit(Guid id, string text)
+        public void Emit(Guid id, string text) => Emit(id, text,
+            double.Parse(text, System.Globalization.CultureInfo.InvariantCulture), null, DateTimeOffset.UtcNow);
+        public void Emit(Guid id, string text, double? value, string? error, DateTimeOffset timestamp)
         {
-            RawFrame raw = new(id, DateTimeOffset.UtcNow, FrameSource.Simulator, text);
-            FrameProcessed?.Invoke(new ParsedFrame(raw, "测量值", string.Empty, double.Parse(text, System.Globalization.CultureInfo.InvariantCulture), null));
+            RawFrame raw = new(id, timestamp, FrameSource.Simulator, text);
+            FrameProcessed?.Invoke(new ParsedFrame(raw, "测量值", string.Empty, value, error));
         }
         private void SetState(Guid id, ConnectionState state)
         {
