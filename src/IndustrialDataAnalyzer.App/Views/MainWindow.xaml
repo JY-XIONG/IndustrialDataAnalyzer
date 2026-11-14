@@ -39,7 +39,7 @@
         </Border>
         <StackPanel DockPanel.Dock="Bottom" Margin="14,8,14,16">
           <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Margin="0,0,0,12" />
-          <TextBlock Text="第一阶段 · 基础框架" Style="{StaticResource HintText}" Margin="8,0" />
+          <TextBlock Text="第二阶段 · 设备通信" Style="{StaticResource HintText}" Margin="8,0" />
         </StackPanel>
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
           <StackPanel Margin="12,14">
@@ -64,7 +64,7 @@
       <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="28,0">
         <DockPanel LastChildFill="True">
           <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
-            <controls:StatusBadge Text="尚未连接设备" Margin="0,0,14,0" />
+            <controls:StatusBadge Text="{Binding OnlineStatus}" Margin="0,0,14,0" />
             <TextBlock Text="{Binding ApplicationInfo.Version}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" FontFamily="Segoe UI" />
           </StackPanel>
           <TextBlock Text="{Binding CurrentPage.Title}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -75,8 +75,8 @@
       </ScrollViewer>
       <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="20,0">
         <DockPanel VerticalAlignment="Center">
-          <TextBlock Text="基础框架就绪" Style="{StaticResource HintText}" DockPanel.Dock="Left" />
-          <TextBlock Text="设备接入与数据存储将在后续阶段提供" Style="{StaticResource HintText}" HorizontalAlignment="Right" />
+          <TextBlock Text="设备管理与通信就绪" Style="{StaticResource HintText}" DockPanel.Dock="Left" />
+          <TextBlock Text="测量存储、历史分析和报表将在后续阶段提供" Style="{StaticResource HintText}" HorizontalAlignment="Right" />
         </DockPanel>
       </Border>
     </Grid>

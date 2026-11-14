@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using IndustrialDataAnalyzer.App.ViewModels.Pages;
 using IndustrialDataAnalyzer.Core.Abstractions;
+using IndustrialDataAnalyzer.Core.Models;
 
 namespace IndustrialDataAnalyzer.App.ViewModels;
 
@@ -12,7 +13,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly NavigationItem[] navigationItems;
 
     /// <summary>Creates the window state from registered page view models.</summary>
-    public MainWindowViewModel(IEnumerable<PageViewModel> pageViewModels, IApplicationInfo applicationInfo)
+    public MainWindowViewModel(IEnumerable<PageViewModel> pageViewModels, IApplicationInfo applicationInfo, IDeviceManager? deviceManager = null)
     {
         pages = pageViewModels.ToDictionary(page => page.Page);
         ApplicationInfo = applicationInfo;
@@ -31,6 +32,13 @@ public partial class MainWindowViewModel : ObservableObject
         navigationItems = [.. WorkspaceItems, .. DeviceItems, .. DataItems, .. SystemItems];
         CurrentPage = pages[NavigationPage.Overview];
         navigationItems[0].IsSelected = true;
+        if (deviceManager is not null)
+        {
+            void RefreshStatus() => UiThread.Post(() => OnlineStatus = $"在线设备：{deviceManager.Devices.Count(device => deviceManager.GetState(device.Id) == ConnectionState.Connected)}");
+            deviceManager.DevicesChanged += RefreshStatus;
+            deviceManager.StateChanged += _ => RefreshStatus();
+            RefreshStatus();
+        }
     }
 
     /// <summary>Gets immutable application information.</summary>
@@ -43,6 +51,9 @@ public partial class MainWindowViewModel : ObservableObject
     public IReadOnlyList<NavigationItem> DataItems { get; }
     /// <summary>Gets system navigation items.</summary>
     public IReadOnlyList<NavigationItem> SystemItems { get; }
+
+    [ObservableProperty]
+    private string onlineStatus = "在线设备：0";
 
     [ObservableProperty]
     private PageViewModel currentPage;

@@ -1,7 +1,8 @@
-using System.Reflection;
-using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
@@ -11,8 +12,14 @@ using IndustrialDataAnalyzer.App.ViewModels;
 using IndustrialDataAnalyzer.App.ViewModels.Pages;
 using IndustrialDataAnalyzer.App.Views;
 using IndustrialDataAnalyzer.Core.Abstractions;
+using IndustrialDataAnalyzer.Core.Models;
 using IndustrialDataAnalyzer.Infrastructure.Paths;
+using IndustrialDataAnalyzer.Infrastructure.Communication;
+using IndustrialDataAnalyzer.Infrastructure.Persistence;
 using IndustrialDataAnalyzer.Services.Application;
+using IndustrialDataAnalyzer.Services.Devices;
+using IndustrialDataAnalyzer.App.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
@@ -37,7 +44,8 @@ public partial class App : System.Windows.Application
                 .MinimumLevel.Information()
                 .WriteTo.File(Path.Combine(paths.LogsDirectory, "app-.log"),
                     rollingInterval: RollingInterval.Day, retainedFileCountLimit: 30,
-                    retainedFileTimeLimit: TimeSpan.FromDays(30), shared: true)
+                    retainedFileTimeLimit: TimeSpan.FromDays(30),
+                    fileSizeLimitBytes: 10 * 1024 * 1024, rollOnFileSizeLimit: true, shared: true)
                 .CreateLogger();
 
             DispatcherUnhandledException += ReportUiException;
@@ -49,6 +57,12 @@ public partial class App : System.Windows.Application
                 .ConfigureServices((_, services) =>
                 {
                     services.AddSingleton<IApplicationPaths>(paths);
+                    services.AddSingleton<IDeviceRepository, JsonDeviceRepository>();
+                    services.AddSingleton<IFrameParser, FrameParser>();
+                    services.AddSingleton<ICommunicationChannelFactory, CommunicationChannelFactory>();
+                    services.AddSingleton<IPortCatalog, SerialPortCatalog>();
+                    services.AddSingleton<IDeviceManager, DeviceManager>();
+                    services.AddSingleton<IDeviceDialogService, DeviceDialogService>();
                     services.AddSingleton<IApplicationInfo>(_ => new ApplicationInfoService(
                         paths,
                         $"{RuntimeInformation.OSDescription.Trim()} · {RuntimeInformation.ProcessArchitecture} · .NET {Environment.Version.Major}",
@@ -66,6 +80,7 @@ public partial class App : System.Windows.Application
                 }).Build();
 
             await host.StartAsync();
+            await host.Services.GetRequiredService<IDeviceManager>().InitializeAsync();
             MainWindow = host.Services.GetRequiredService<MainWindow>();
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             MainWindow.Closed += async (_, _) => await ShutdownApplicationAsync();
@@ -86,16 +101,91 @@ public partial class App : System.Windows.Application
                 {
                     viewModel.NavigateCommand.Execute(item);
                     string path = Path.Combine(e.Args[1], $"{(int)item.Page + 1:00}-{item.Page}.png");
-                    await Dispatcher.InvokeAsync(() => SaveWindowSnapshot(path), DispatcherPriority.ApplicationIdle);
+                    await Dispatcher.InvokeAsync(() => SaveWindowSnapshot(MainWindow, path), DispatcherPriority.ApplicationIdle);
                 }
+                await ShutdownApplicationAsync();
+            }
+            else if ((e.Args.Length == 2 || e.Args.Length == 3) && e.Args[0] == "--capture-editor")
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(e.Args[1])!);
+                var editor = new DeviceEditorViewModel(null, host.Services.GetRequiredService<IPortCatalog>());
+                if (e.Args.Length == 3 && e.Args[2] == "--serial") editor.Kind = DeviceKind.Serial;
+                var dialog = new DeviceEditorWindow
+                {
+                    Owner = MainWindow,
+                    DataContext = editor
+                };
+                dialog.Show();
+                await Dispatcher.InvokeAsync(() => SaveWindowSnapshot(dialog, e.Args[1]), DispatcherPriority.ApplicationIdle);
+                dialog.Close();
+                await ShutdownApplicationAsync();
+            }
+            else if ((e.Args.Length == 2 || e.Args.Length == 3) && e.Args[0] == "--capture-demo")
+            {
+                if (e.Args.Length == 3 && e.Args[2] == "--min-size")
+                {
+                    MainWindow.Width = MainWindow.MinWidth;
+                    MainWindow.Height = MainWindow.MinHeight;
+                }
+                Directory.CreateDirectory(e.Args[1]);
+                var demoRepository = new CaptureDeviceRepository();
+                await using var demo = new DeviceManager(demoRepository,
+                    new CommunicationChannelFactory(NullLoggerFactory.Instance), new FrameParser(),
+                    NullLogger<DeviceManager>.Instance);
+                await demo.InitializeAsync();
+                var device = new DeviceDefinition
+                {
+                    Id = Guid.NewGuid(), Name = "模拟温度计", Code = "SIM-T01", Kind = DeviceKind.Simulator,
+                    Simulator = new SimulatorOptions { Measurement = MeasurementKind.Temperature, Minimum = 21, Maximum = 26, IntervalMilliseconds = 100 },
+                    Parser = new ParserOptions { FieldName = "温度", Unit = "℃" }
+                };
+                await demo.UpsertAsync(device);
+                PageViewModel[] pages = [.. host.Services.GetServices<PageViewModel>().Select(page => page.Page switch
+                {
+                    NavigationPage.Overview => new OverviewViewModel(demo),
+                    NavigationPage.Devices => new DevicesViewModel(demo),
+                    NavigationPage.Acquisition => new AcquisitionViewModel(demo),
+                    _ => page
+                })];
+                var preview = new MainWindowViewModel(pages, host.Services.GetRequiredService<IApplicationInfo>(), demo);
+                MainWindow.DataContext = preview;
+                preview.NavigateCommand.Execute(preview.DeviceItems[0]);
+                await Dispatcher.InvokeAsync(() => SaveWindowSnapshot(MainWindow, Path.Combine(e.Args[1], "devices-with-data.png")), DispatcherPriority.ApplicationIdle);
+                await demo.ConnectAsync(device.Id);
+                await Task.Delay(260);
+                preview.NavigateCommand.Execute(preview.DeviceItems[1]);
+                await Dispatcher.InvokeAsync(() => SaveWindowSnapshot(MainWindow, Path.Combine(e.Args[1], "acquisition-with-data.png")), DispatcherPriority.ApplicationIdle);
+                preview.NavigateCommand.Execute(preview.WorkspaceItems[0]);
+                await Dispatcher.InvokeAsync(() => SaveWindowSnapshot(MainWindow, Path.Combine(e.Args[1], "overview-with-data.png")), DispatcherPriority.ApplicationIdle);
                 await ShutdownApplicationAsync();
             }
 #endif
         }
         catch (Exception exception)
         {
-            Log.Fatal(exception, "Application startup failed");
-            MessageBox.Show("程序启动失败。请查看日志目录中的错误记录。", "启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            Trace.TraceError("Application startup failed: {0}", exception);
+            try
+            {
+                Log.Fatal(exception, "Application startup failed");
+            }
+            catch (Exception loggingException)
+            {
+                Trace.TraceError("Startup failure could not be written to Serilog: {0}", loggingException);
+            }
+
+            string reason = exception.GetBaseException().Message;
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                reason = exception.GetType().Name;
+            }
+            if (reason.Length > 400)
+            {
+                reason = reason[..400] + "…";
+            }
+
+            MessageBox.Show(
+                $"程序启动失败。\n原因：{reason}\n\n如果没有生成日志，请检查 %LocalAppData%\\IndustrialDataAnalyzer 的写入权限。",
+                "启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
         }
     }
@@ -121,6 +211,7 @@ public partial class App : System.Windows.Application
         {
             if (host is not null)
             {
+                await host.Services.GetRequiredService<IDeviceManager>().DisposeAsync();
                 await host.StopAsync(TimeSpan.FromSeconds(5));
             }
         }
@@ -152,11 +243,22 @@ public partial class App : System.Windows.Application
     }
 
 #if DEBUG
-    private void SaveWindowSnapshot(string path)
+    private sealed class CaptureDeviceRepository : IDeviceRepository
     {
-        MainWindow.UpdateLayout();
-        var bitmap = new RenderTargetBitmap((int)MainWindow.ActualWidth, (int)MainWindow.ActualHeight, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(MainWindow);
+        private IReadOnlyList<DeviceDefinition> devices = [];
+        public Task<IReadOnlyList<DeviceDefinition>> LoadAsync(CancellationToken cancellationToken = default) => Task.FromResult(devices);
+        public Task SaveAsync(IReadOnlyList<DeviceDefinition> updated, CancellationToken cancellationToken = default)
+        {
+            devices = [.. updated];
+            return Task.CompletedTask;
+        }
+    }
+
+    private static void SaveWindowSnapshot(Window window, string path)
+    {
+        window.UpdateLayout();
+        var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(window);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = File.Create(path);

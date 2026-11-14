@@ -11,6 +11,7 @@ public sealed class ApplicationPaths : IApplicationPaths
         ArgumentException.ThrowIfNullOrWhiteSpace(localApplicationDataDirectory);
         DataDirectory = Path.Combine(localApplicationDataDirectory, "IndustrialDataAnalyzer");
         LogsDirectory = Path.Combine(DataDirectory, "Logs");
+        DeviceConfigurationFile = Path.Combine(DataDirectory, "devices.json");
     }
 
     /// <inheritdoc />
@@ -18,6 +19,9 @@ public sealed class ApplicationPaths : IApplicationPaths
 
     /// <inheritdoc />
     public string LogsDirectory { get; }
+
+    /// <inheritdoc />
+    public string DeviceConfigurationFile { get; }
 
     /// <inheritdoc />
     public void Initialize()

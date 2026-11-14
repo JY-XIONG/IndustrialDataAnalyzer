@@ -9,6 +9,9 @@ public interface IApplicationPaths
     /// <summary>Gets the directory for rolling log files.</summary>
     string LogsDirectory { get; }
 
+    /// <summary>Gets the local JSON device configuration file.</summary>
+    string DeviceConfigurationFile { get; }
+
     /// <summary>Creates the directories required during startup.</summary>
     void Initialize();
 }

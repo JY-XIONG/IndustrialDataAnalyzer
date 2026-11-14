@@ -1,46 +1,46 @@
 # 通用工业设备数据采集与分析软件
 
-IndustrialDataAnalyzer 是面向工业仪器、自动化检测设备和实验设备的 Windows 桌面软件。当前仓库完成 **V1.0 第一阶段**：.NET 10 / WPF 工程、MVVM 导航、基础服务、日志和八个页面的界面框架。
+IndustrialDataAnalyzer 是 .NET 10 / WPF 桌面软件。当前完成 **V1.0 第二阶段：设备管理与通信**，保留第一阶段的八页导航、界面资源、日志和 Windows 构建工作流。
 
-## 当前可用内容
+## 当前功能
 
-- 单窗口导航：系统总览、设备管理、实时数据采集、实时监测、历史数据分析、报警中心、报表管理、系统设置。
-- 统一的页头、指标卡、状态标签、空状态、区域卡片和只读表格样式。
-- 启动时创建 `%LocalAppData%\IndustrialDataAnalyzer\Logs`，按天滚动日志，最多保留 30 天。
-- 系统设置显示软件版本、运行环境、数据目录和日志目录。
-- 尚未接入设备，所有统计为零或明确的空状态；不生成演示采集数据。
+- 设备管理：新增、编辑、删除、按名称/编号/端口/备注查询；支持真实串口和模拟设备；配置保存在 `%LocalAppData%\IndustrialDataAnalyzer\devices.json`，更新时安全替换并保留 `.bak`。
+- 串口通信：扫描 COM 端口，配置波特率、数据位、停止位、校验位、流控、UTF-8/ASCII 编码和报文结束符；异步连接、收发、断开及手动重连。按结束符组装拆分或粘连的报文；I/O 失败或端口从系统消失时更新异常状态。
+- 模拟设备：温度、重量、电压，范围和采样间隔可配置；无硬件也可连续采集，数据明确标为“模拟”。
+- 数据解析：文本数值、分隔符字段和正则捕获组；原始报文、结果及失败原因在实时采集页显示，运行期间每台设备保留最近 200 条记录。
+- 系统总览：设备总数、在线数和连接状态随设备变化更新。其他五个页面仍可打开，后续阶段功能保持空状态。
+- 日志：`%LocalAppData%\IndustrialDataAnalyzer\Logs` 中的滚动文件记录连接、断开、报文与解析错误。单文件上限 10 MiB，最多保留 30 个文件 / 30 天。
 
-第一阶段没有串口、Modbus、模拟设备、SQLite、实时曲线、报警规则或报表导出。后续范围见 [开发计划](docs/DEVELOPMENT_PLAN.md)。
+本阶段**没有** SQLite 测量数据存储、历史分析、实时曲线、报警规则或报表导出。运行期间的报文记录只保存在内存，退出后清除。设备配置则会在重启后恢复。
 
-## 工程结构
+## 构建和运行
 
-```text
-IndustrialDataAnalyzer.slnx
-Directory.Build.props / Directory.Packages.props
-src/
-  IndustrialDataAnalyzer.Core/             接口及领域基础
-  IndustrialDataAnalyzer.Services/         应用信息等服务
-  IndustrialDataAnalyzer.Infrastructure/   用户数据目录等基础设施
-  IndustrialDataAnalyzer.App/              WPF 页面、控件、资源与导航
-tests/IndustrialDataAnalyzer.Tests/        xUnit 基础服务测试
-docs/                                   架构、开发和阶段计划
-publish/                                预留免安装发布目录
-```
-
-依赖方向：`Services → Core`、`Infrastructure → Core`、`App → Core + Services + Infrastructure`。详细说明见 [架构文档](docs/ARCHITECTURE.md)。
-
-## 开发和运行
-
-在 Windows x64 上安装 .NET 10 SDK。用 PowerShell 在仓库根目录执行：
+在 Windows x64 安装 .NET 10 SDK 后，从仓库根目录执行：
 
 ```powershell
-dotnet --info
 dotnet restore IndustrialDataAnalyzer.slnx
 dotnet build IndustrialDataAnalyzer.slnx -c Debug
 dotnet test IndustrialDataAnalyzer.slnx -c Debug
 dotnet run --project src/IndustrialDataAnalyzer.App/IndustrialDataAnalyzer.App.csproj
 ```
 
-也可以用支持 .NET 10 WPF 开发的 Visual Studio 打开 `.slnx`。本机若遇到 NuGet TLS 错误，见 [开发说明](docs/DEVELOPMENT.md) 中的受限网络恢复方法。
+正常构建使用官方 NuGet 源及默认的依赖安全审计。本机若遇到 NuGet TLS 故障，可按 [开发说明](docs/DEVELOPMENT.md) 使用仅供本机恢复的可选桥接脚本。GitHub Actions 在 push 和 pull_request 时执行 Windows / .NET 10 还原、Debug 编译和测试。
 
-实际运行的 [系统总览截图](artifacts/pages/01-Overview.png) 和其余七页截图位于 `artifacts/pages/`。这些截图只证明第一阶段的界面渲染，设备与数据业务尚未实现。
+## 设备使用
+
+在“设备管理”新增设备。串口设备选择当前 COM 端口并填写通信参数；模拟设备选择测量类型、数值范围和采样间隔。可为设备设置数值、分隔符或正则解析规则。保存后在设备页连接，或在“实时数据采集”选择设备并启动；该页面显示当前状态、最新测量值、原始报文和解析记录。串口发送会自动追加配置的报文结束符。停止或退出时连接会释放。
+
+默认串口结束符为 `\n`，也支持 `\r\n` 等转义写法；默认编码为 UTF-8，数值解析使用小数点。真实设备需要输出与配置一致的文本行协议。详见 [设备通信说明](docs/DEVICE_COMMUNICATION.md)。
+
+## 工程结构
+
+```text
+src/IndustrialDataAnalyzer.Core/             设备模型与服务接口
+src/IndustrialDataAnalyzer.Services/         设备编排、验证与报文解析
+src/IndustrialDataAnalyzer.Infrastructure/   JSON 配置、串口和模拟通信
+src/IndustrialDataAnalyzer.App/              WPF 页面、视图模型与服务组装
+tests/IndustrialDataAnalyzer.Tests/          xUnit 测试
+docs/                                   架构、开发和阶段验收文档
+```
+
+分层依赖关系及资源释放方式见 [架构说明](docs/ARCHITECTURE.md)。本阶段的测试证据、未验证事项和验收结论见 [第二阶段验收报告](docs/SECOND_STAGE_ACCEPTANCE.md)；[第一阶段报告](docs/FIRST_STAGE_ACCEPTANCE.md)保留为历史记录。

@@ -24,7 +24,7 @@
     <controls:SectionCard Header="关于软件">
       <StackPanel>
         <TextBlock Text="通用工业设备数据采集与分析软件" FontWeight="SemiBold" />
-        <TextBlock Text="当前为 V1.0 第一阶段基础框架。设备通信、数据存储、分析与报表功能将按开发计划逐步接入。" Style="{StaticResource HintText}" Margin="0,9,0,0" />
+        <TextBlock Text="当前完成第二阶段设备管理、串口通信、模拟采集和文本解析。测量数据存储、历史分析、曲线与报表仍按后续阶段实施。" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,9,0,0" />
       </StackPanel>
     </controls:SectionCard>
   </StackPanel>

@@ -7,26 +7,54 @@
     <Grid Margin="0,0,0,18">
       <Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="1*" /></Grid.ColumnDefinitions>
       <controls:SectionCard Header="当前设备" Margin="0,0,9,0">
-        <StackPanel><TextBlock Text="未选择设备" FontWeight="SemiBold" /><TextBlock Text="设备接入将在第二阶段提供" Style="{StaticResource HintText}" Margin="0,8,0,0" /></StackPanel>
+        <StackPanel>
+          <ComboBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice, Mode=TwoWay}" DisplayMemberPath="Name" MinWidth="160" />
+          <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+            <Button Content="启动 / 重连" Command="{Binding StartCommand}" IsEnabled="{Binding HasSelectedDevice}" Padding="12,7" Margin="0,0,8,0" />
+            <Button Content="停止" Command="{Binding StopCommand}" IsEnabled="{Binding HasSelectedDevice}" Style="{StaticResource OutlineButton}" />
+          </StackPanel>
+        </StackPanel>
       </controls:SectionCard>
       <controls:SectionCard Grid.Column="1" Header="采集状态" Margin="9,0,0,0">
-        <StackPanel><controls:StatusBadge Text="未开始" /><TextBlock Text="当前没有采集任务" Style="{StaticResource HintText}" Margin="0,8,0,0" /></StackPanel>
+        <StackPanel>
+          <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding Notice}" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,8,0,0" />
+        </StackPanel>
       </controls:SectionCard>
     </Grid>
-    <controls:SectionCard Header="实时测量值" Margin="0,0,0,18" MinHeight="130">
-      <controls:EmptyState Title="暂无测量值" Message="连接设备并启动采集后显示实时数据。" />
+    <controls:SectionCard Header="实时测量值" Margin="0,0,0,18" MinHeight="115">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <TextBlock Text="{Binding LatestValue}" FontSize="34" FontWeight="SemiBold" Margin="0,0,14,0" />
+        <TextBlock Text="{Binding LatestField}" Style="{StaticResource HintText}" VerticalAlignment="Bottom" Margin="0,0,0,8" />
+      </StackPanel>
     </controls:SectionCard>
     <Grid Margin="0,0,0,18">
       <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
-      <controls:SectionCard Header="原始通信报文" Margin="0,0,9,0" MinHeight="160">
-        <controls:EmptyState Title="暂无报文" Message="接收到设备数据后显示原始通信内容。" />
+      <controls:SectionCard Header="最新原始报文" Margin="0,0,9,0" MinHeight="145">
+        <TextBlock Text="{Binding LatestRaw}" TextWrapping="Wrap" FontFamily="Consolas" />
       </controls:SectionCard>
-      <controls:SectionCard Grid.Column="1" Header="数据解析结果" Margin="9,0,0,0" MinHeight="160">
-        <controls:EmptyState Title="暂无解析结果" Message="配置协议后显示字段和解析值。" />
+      <controls:SectionCard Grid.Column="1" Header="最新解析结果" Margin="9,0,0,0" MinHeight="145">
+        <TextBlock Text="{Binding LatestResult}" TextWrapping="Wrap" />
       </controls:SectionCard>
     </Grid>
-    <controls:SectionCard Header="采集记录" MinHeight="150">
-      <controls:EmptyState Title="暂无采集记录" Message="采集记录将在后续阶段显示。" />
+    <controls:SectionCard Header="串口发送" Margin="0,0,0,18">
+      <DockPanel>
+        <Button Content="发送" DockPanel.Dock="Right" Command="{Binding SendCommand}" IsEnabled="{Binding IsSerial}" Padding="16,7" Margin="8,0,0,0" />
+        <TextBox Text="{Binding SendText, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsSerial}" VerticalContentAlignment="Center" />
+      </DockPanel>
+    </controls:SectionCard>
+    <controls:SectionCard Header="本次运行收到的报文与解析记录" MinHeight="205">
+      <StackPanel>
+        <TextBlock Text="最多保留每台设备最近 200 条记录；切换设备可查看其近期报文。" Style="{StaticResource HintText}" Margin="0,0,0,10" />
+        <controls:DataTable ItemsSource="{Binding RecentFrames}" AutoGenerateColumns="False" IsReadOnly="True" Height="220" MinWidth="700">
+          <controls:DataTable.Columns>
+            <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="110" />
+            <DataGridTextColumn Header="来源" Binding="{Binding Source}" Width="75" />
+            <DataGridTextColumn Header="原始报文" Binding="{Binding Raw}" Width="1.3*" />
+            <DataGridTextColumn Header="解析结果" Binding="{Binding Result}" Width="1.5*" />
+          </controls:DataTable.Columns>
+        </controls:DataTable>
+      </StackPanel>
     </controls:SectionCard>
   </StackPanel>
 </UserControl>

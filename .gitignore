@@ -10,3 +10,5 @@ publish/*
 *.log
 .packages/
 .runtime-profile/
+.nuget-http-cache/
+.test-temp/

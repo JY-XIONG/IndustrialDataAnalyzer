@@ -6,18 +6,39 @@
     <controls:PageHeader Title="{Binding Title}" Description="{Binding Description}" />
     <controls:SectionCard Header="设备列表">
       <StackPanel>
-        <TextBlock Text="设备登记与连接功能将在第二阶段开放。" Style="{StaticResource HintText}" Margin="0,0,0,14" />
-        <controls:DataTable Height="144">
+        <DockPanel Margin="0,0,0,12">
+          <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+            <Button Content="新增设备" Command="{Binding AddCommand}" Padding="12,7" Margin="8,0,0,0" />
+            <Button Content="编辑" Command="{Binding EditCommand}" IsEnabled="{Binding HasSelection}" Style="{StaticResource OutlineButton}" Margin="8,0,0,0" />
+            <Button Content="删除" Command="{Binding DeleteCommand}" IsEnabled="{Binding HasSelection}" Style="{StaticResource OutlineButton}" Margin="8,0,0,0" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <TextBlock Text="查询设备" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Width="210" VerticalContentAlignment="Center"
+                     ToolTip="按名称、编号、类型、端口或备注查询" />
+          </StackPanel>
+        </DockPanel>
+        <controls:DataTable ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice, Mode=TwoWay}" AutoGenerateColumns="False"
+                            IsReadOnly="True" Height="275" MinWidth="740" SelectionMode="Single">
           <controls:DataTable.Columns>
-            <DataGridTextColumn Header="状态" Width="0.7*" />
-            <DataGridTextColumn Header="设备名称" Width="1.1*" />
-            <DataGridTextColumn Header="设备编号" Width="1*" />
-            <DataGridTextColumn Header="通信方式" Width="1*" />
-            <DataGridTextColumn Header="通信参数摘要" Width="1.4*" />
-            <DataGridTextColumn Header="备注" Width="1*" />
+            <DataGridTextColumn Header="状态" Binding="{Binding StatusText}" Width="90" />
+            <DataGridTextColumn Header="设备名称" Binding="{Binding Name}" Width="1.15*" />
+            <DataGridTextColumn Header="设备编号" Binding="{Binding Code}" Width="1*" />
+            <DataGridTextColumn Header="设备类型" Binding="{Binding TypeText}" Width="100" />
+            <DataGridTextColumn Header="通信参数" Binding="{Binding Summary}" Width="1.65*" />
+            <DataGridTextColumn Header="备注" Binding="{Binding Notes}" Width="1*" />
           </controls:DataTable.Columns>
         </controls:DataTable>
-        <controls:EmptyState Title="尚未添加设备" Message="第二阶段将提供设备登记、通信配置与连接操作。" />
+        <TextBlock Text="{Binding Notice}" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,10,0,0" />
+      </StackPanel>
+    </controls:SectionCard>
+    <controls:SectionCard Header="连接操作" Margin="0,18,0,0">
+      <StackPanel>
+        <TextBlock Text="选择设备后连接、断开或手动重连。模拟设备无需真实硬件。" Style="{StaticResource HintText}" Margin="0,0,0,12" />
+        <StackPanel Orientation="Horizontal">
+          <Button Content="连接 / 重连" Command="{Binding ConnectCommand}" IsEnabled="{Binding HasSelection}" Padding="14,7" Margin="0,0,8,0" />
+          <Button Content="断开" Command="{Binding DisconnectCommand}" IsEnabled="{Binding HasSelection}" Style="{StaticResource OutlineButton}" />
+        </StackPanel>
       </StackPanel>
     </controls:SectionCard>
   </StackPanel>
