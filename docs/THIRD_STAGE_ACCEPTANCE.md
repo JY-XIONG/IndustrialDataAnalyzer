@@ -18,7 +18,7 @@
 - `dotnet build IndustrialDataAnalyzer.slnx -c Debug --no-restore -p:RestorePackagesPath=D:\Projects\IndustrialDataAnalyzer\.packages`：退出码 0，**0 警告、0 错误**。
 - `dotnet test IndustrialDataAnalyzer.slnx -c Debug --no-build --no-restore -p:RestorePackagesPath=D:\Projects\IndustrialDataAnalyzer\.packages`：退出码 0，**53/53 通过，0 跳过**；其中包含原有 46 项及新增 7 项。
 - Debug WPF 实际运行：`--capture-all` 在 1440×900 和 1120×720 各捕获 8 页，均正常退出；`--capture-storage-demo` 使用隔离的 SQLite 数据库采集模拟温度，捕获采集、总览及有真实历史行的页面。历史页最小尺寸下筛选控件、表格和纵向滚动可用；截图在本机 `.test-temp/phase3-ui/`，未作为产品数据提交。
-- GitHub Actions：推送后补记对应提交与 Windows 构建结果。
+- [GitHub Actions Windows build 第 5 次运行](https://github.com/JY-XIONG/IndustrialDataAnalyzer/actions/runs/43580688898) 对第三阶段代码提交 `ee0ad28` 的官方源还原、Debug 编译和全部 xUnit 测试均为 **success**。
 
 ## 本轮修改文件
 
@@ -31,4 +31,4 @@
 3. 数据库持续损坏时不会自动覆盖原库；应用报告故障，并保留 `.bak`、迁移备份和恢复文件供人工检查后恢复。历史会话下拉默认列出最近 200 个，可输入完整会话 ID 查询更早的会话。
 4. 第四阶段实时曲线与统计分析、第五阶段报警和报表没有开发。
 
-**验收结论：** 第三阶段软件功能、本地编译及自动化验证通过；真实硬件和多小时运行待现场验证。远端 CI 结果待推送后补记。
+**验收结论：** 第三阶段软件功能、本地编译、自动化测试与远端 Windows CI 通过；真实硬件和多小时运行待现场验证。
