@@ -17,6 +17,8 @@ public sealed class CapturePersistenceService : ICapturePersistence
     private readonly string journalPath;
     private readonly string lossJournalPath;
     private readonly TimeSpan shutdownDrainTimeout;
+    private readonly TimeSpan sessionDrainTimeout;
+    private readonly TimeSpan workerStopTimeout;
     private readonly CancellationTokenSource shutdown = new();
     private readonly Channel<QueuedCapture> queue = Channel.CreateBounded<QueuedCapture>(
         new BoundedChannelOptions(Capacity)
@@ -27,13 +29,17 @@ public sealed class CapturePersistenceService : ICapturePersistence
             AllowSynchronousContinuations = false
         });
     private readonly object gate = new();
+    private readonly SemaphoreSlim disposeGate = new(1, 1);
     private readonly SemaphoreSlim initializeGate = new(1, 1);
     private readonly Dictionary<Guid, SessionContext> sessions = [];
     private readonly Dictionary<Guid, SessionContext> latestByDevice = [];
     private List<QueuedCapture> inFlight = [];
+    private List<QueuedCapture>? recoverySnapshot;
     private readonly Task worker;
     private bool initialized;
     private bool disposed;
+    private bool closing;
+    private bool forcedStop;
     private string? storageError;
 
     public CapturePersistenceService(IMeasurementRepository repository, IFrameParser parser,
@@ -41,7 +47,8 @@ public sealed class CapturePersistenceService : ICapturePersistence
         : this(repository, parser, paths, logger, TimeSpan.FromSeconds(15)) { }
 
     internal CapturePersistenceService(IMeasurementRepository repository, IFrameParser parser,
-        IApplicationPaths paths, ILogger<CapturePersistenceService> logger, TimeSpan shutdownDrainTimeout)
+        IApplicationPaths paths, ILogger<CapturePersistenceService> logger, TimeSpan shutdownDrainTimeout,
+        TimeSpan? sessionDrainTimeout = null, TimeSpan? workerStopTimeout = null)
     {
         this.repository = repository;
         this.parser = parser;
@@ -49,6 +56,8 @@ public sealed class CapturePersistenceService : ICapturePersistence
         journalPath = Path.Combine(paths.DataDirectory, "pending-capture.jsonl");
         lossJournalPath = Path.Combine(paths.DataDirectory, "pending-loss.json");
         this.shutdownDrainTimeout = shutdownDrainTimeout;
+        this.sessionDrainTimeout = sessionDrainTimeout ?? TimeSpan.FromSeconds(15);
+        this.workerStopTimeout = workerStopTimeout ?? TimeSpan.FromSeconds(7);
         worker = Task.Run(WriteLoopAsync);
     }
 
@@ -76,6 +85,7 @@ public sealed class CapturePersistenceService : ICapturePersistence
     public async Task<Guid> BeginSessionAsync(DeviceDefinition device, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
+        if (closing) throw new InvalidOperationException("存储服务正在关闭，不能建立新会话。");
         if (!initialized) await InitializeAsync(cancellationToken).ConfigureAwait(false);
         if (!initialized) throw new IOException(StorageError ?? "数据库不可用，不能启动采集。");
         lock (gate)
@@ -107,7 +117,7 @@ public sealed class CapturePersistenceService : ICapturePersistence
     {
         lock (gate)
         {
-            if (!sessions.TryGetValue(sessionId, out SessionContext? context) || !context.Active || context.Stopping)
+            if (closing || !sessions.TryGetValue(sessionId, out SessionContext? context) || !context.Active || context.Stopping)
                 return false;
             if (context.Pending == 0 && context.Drained.Task.IsCompleted)
                 context.Drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -125,35 +135,74 @@ public sealed class CapturePersistenceService : ICapturePersistence
     public async Task EndSessionAsync(Guid sessionId, CaptureSessionState state = CaptureSessionState.Completed,
         CancellationToken cancellationToken = default)
     {
+        if (state is not (CaptureSessionState.Completed or CaptureSessionState.Failed))
+            throw new ArgumentOutOfRangeException(nameof(state), "结束会话需要正常结束或异常结束状态。");
         SessionContext context;
-        Task drained;
         lock (gate)
         {
             if (!sessions.TryGetValue(sessionId, out context!)) return;
-            context.Stopping = true;
-            drained = context.Pending == 0 ? Task.CompletedTask : context.Drained.Task;
         }
-        try { await drained.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false); }
-        catch (TimeoutException exception)
+        await context.EndGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            lock (gate) context.Error = $"仍有 {context.Pending} 条待落盘；数据库恢复后可重试停止。";
-            throw new IOException(context.Error, exception);
+            Task drained;
+            CaptureSessionState finalState;
+            lock (gate)
+            {
+                if (!sessions.ContainsKey(sessionId)) return;
+                context.Stopping = true;
+                context.DesiredTerminalState ??= state;
+                finalState = context.DesiredTerminalState.Value;
+                context.State = CaptureSessionState.Stopping;
+                drained = context.Pending == 0 ? Task.CompletedTask : context.Drained.Task;
+            }
+            await UpdateDatabaseStateAsync(context, CaptureSessionState.Stopping).ConfigureAwait(false);
+            try { await drained.WaitAsync(sessionDrainTimeout, cancellationToken).ConfigureAwait(false); }
+            catch (TimeoutException exception)
+            {
+                string error;
+                lock (gate)
+                {
+                    context.State = CaptureSessionState.WaitingForStorage;
+                    context.Error = $"仍有 {context.Pending} 条待落盘；数据库恢复后可重试停止。";
+                    error = context.Error;
+                }
+                await UpdateDatabaseStateAsync(context, CaptureSessionState.WaitingForStorage).ConfigureAwait(false);
+                throw new IOException(error, exception);
+            }
+            try { await repository.CompleteSessionAsync(sessionId, finalState, context.Lost, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                lock (gate)
+                {
+                    context.State = CaptureSessionState.WaitingForStorage;
+                    storageError = "结束采集会话失败：" + exception.Message;
+                    context.Error = storageError;
+                }
+                await UpdateDatabaseStateAsync(context, CaptureSessionState.WaitingForStorage).ConfigureAwait(false);
+                logger.LogError(exception, "Could not finish capture session {SessionId}", sessionId);
+                throw new IOException(StorageError, exception);
+            }
+            lock (gate)
+            {
+                context.Active = false;
+                context.State = finalState;
+                context.Error = context.Lost > 0 ? $"存储积压曾导致 {context.Lost} 条报文丢失。" : null;
+                sessions.Remove(sessionId);
+                storageError = null;
+            }
         }
-        try { await repository.CompleteSessionAsync(sessionId, state, context.Lost, cancellationToken).ConfigureAwait(false); }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        finally { context.EndGate.Release(); }
+    }
+
+    private async Task UpdateDatabaseStateAsync(SessionContext context, CaptureSessionState state)
+    {
+        try { await repository.SetSessionStateAsync(context.Id, state).ConfigureAwait(false); }
         catch (Exception exception)
         {
-            lock (gate) { storageError = "结束采集会话失败：" + exception.Message; context.Error = storageError; }
-            logger.LogError(exception, "Could not finish capture session {SessionId}", sessionId);
-            throw new IOException(StorageError, exception);
-        }
-        lock (gate)
-        {
-            context.Active = false;
-            context.State = state;
-            context.Error = context.Lost > 0 ? $"存储积压曾导致 {context.Lost} 条报文丢失。" : null;
-            sessions.Remove(sessionId);
-            storageError = null;
+            logger.LogWarning(exception, "Could not record intermediate capture state {State} for {SessionId}",
+                state, context.Id);
         }
     }
 
@@ -170,66 +219,148 @@ public sealed class CapturePersistenceService : ICapturePersistence
 
     public async ValueTask DisposeAsync()
     {
-        if (disposed) return;
-        disposed = true;
-        queue.Writer.TryComplete();
-        bool drained = false;
-        try { await worker.WaitAsync(shutdownDrainTimeout).ConfigureAwait(false); drained = true; }
-        catch (TimeoutException)
+        await disposeGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            shutdown.Cancel();
-            try { await worker.WaitAsync(TimeSpan.FromSeconds(7)).ConfigureAwait(false); }
-            catch (OperationCanceledException) { }
-            catch (TimeoutException) { logger.LogError("Capture writer did not stop within shutdown deadline"); }
-            var remaining = new List<QueuedCapture>();
-            lock (gate) remaining.AddRange(inFlight);
-            while (queue.Reader.TryRead(out QueuedCapture? item)) remaining.Add(item);
-            Dictionary<Guid, long> losses;
-            lock (gate) losses = sessions.Values.Where(context => context.Lost > 0)
-                .ToDictionary(context => context.Id, context => context.Lost);
-            if (remaining.Count > 0 || losses.Count > 0)
+            if (disposed) return;
+            lock (gate) closing = true;
+            queue.Writer.TryComplete();
+            if (!forcedStop)
             {
-                await Task.Run(() => SaveJournal(remaining, losses)).ConfigureAwait(false);
-                lock (gate)
+                try { await worker.WaitAsync(shutdownDrainTimeout).ConfigureAwait(false); }
+                catch (TimeoutException)
                 {
-                    storageError = $"数据库仍不可用，{remaining.Count} 条待写报文已转存恢复文件，尚未计为已保存。";
-                    foreach (SessionContext context in sessions.Values) context.Error = storageError;
-                }
-                logger.LogError("Spool {Count} pending frames for recovery at {Path}", remaining.Count, journalPath);
-            }
-        }
-        catch (Exception exception)
-        {
-            logger.LogError(exception, "Capture writer stopped unexpectedly; preserving pending frames");
-            var remaining = new List<QueuedCapture>();
-            lock (gate) remaining.AddRange(inFlight);
-            while (queue.Reader.TryRead(out QueuedCapture? item)) remaining.Add(item);
-            Dictionary<Guid, long> losses;
-            lock (gate) losses = sessions.Values.Where(context => context.Lost > 0)
-                .ToDictionary(context => context.Id, context => context.Lost);
-            if (remaining.Count > 0 || losses.Count > 0)
-                await Task.Run(() => SaveJournal(remaining, losses)).ConfigureAwait(false);
-            lock (gate) storageError = "存储后台任务异常；待写报文已转存恢复文件。";
-        }
-        if (initialized && drained)
-        {
-            foreach (SessionContext context in sessions.Values.ToArray())
-            {
-                try
-                {
-                    await repository.CompleteSessionAsync(context.Id, CaptureSessionState.Completed,
-                        context.Lost).ConfigureAwait(false);
-                    lock (gate) { context.Active = false; context.State = CaptureSessionState.Completed; sessions.Remove(context.Id); }
+                    forcedStop = true;
+                    shutdown.Cancel();
+                    logger.LogWarning("Capture writer did not drain within {Timeout}; cancellation requested",
+                        shutdownDrainTimeout);
                 }
                 catch (Exception exception)
                 {
-                    logger.LogError(exception, "Could not finish session {SessionId} during shutdown", context.Id);
+                    forcedStop = true;
+                    shutdown.Cancel();
+                    logger.LogError(exception, "Capture writer stopped unexpectedly");
+                }
+            }
+            if (forcedStop)
+            {
+                try { await worker.WaitAsync(workerStopTimeout).ConfigureAwait(false); }
+                catch (TimeoutException exception)
+                {
+                    string error = "后台数据库写入任务仍未停止；未生成恢复文件，待写数据未确认为已保存。";
+                    SetRecoveryError(error);
+                    logger.LogCritical(exception, "Unsafe to snapshot capture queue while writer is still running");
+                    throw new IOException(error, exception);
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(exception, "Capture writer ended with an error; preserving remaining frames");
+                }
+                await SpoolRemainingAsync().ConfigureAwait(false);
+            }
+            else if (initialized)
+            {
+                await FinishRemainingSessionsAsync().ConfigureAwait(false);
+                try { await repository.CheckpointAndBackupAsync().ConfigureAwait(false); }
+                catch (Exception exception) { logger.LogError(exception, "Could not checkpoint or back up measurement database"); }
+            }
+            disposed = true;
+            shutdown.Dispose();
+        }
+        finally { disposeGate.Release(); }
+    }
+
+    private async Task SpoolRemainingAsync()
+    {
+        // The worker has completed. It cannot dequeue frames or mutate inFlight during this snapshot.
+        if (recoverySnapshot is null)
+        {
+            var snapshot = new List<QueuedCapture>();
+            lock (gate) snapshot.AddRange(inFlight);
+            while (queue.Reader.TryRead(out QueuedCapture? item)) snapshot.Add(item);
+            recoverySnapshot = snapshot;
+        }
+        List<QueuedCapture> remaining = recoverySnapshot;
+        Dictionary<Guid, long> losses;
+        long pending;
+        lock (gate)
+        {
+            losses = sessions.Values.Where(context => context.Lost > 0)
+                .ToDictionary(context => context.Id, context => context.Lost);
+            pending = sessions.Values.Sum(context => context.Pending);
+        }
+        if (pending != remaining.Count)
+        {
+            string error = $"恢复快照与待写计数不一致（待写 {pending}、快照 {remaining.Count}）；未生成恢复文件。";
+            SetRecoveryError(error);
+            throw new IOException(error);
+        }
+        try
+        {
+            if (remaining.Count > 0 || losses.Count > 0)
+                await Task.Run(() => SaveJournal(remaining, losses)).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            string error = "恢复文件写入失败：" + exception.Message + "；待写数据未确认为已保存。";
+            SetRecoveryError(error);
+            logger.LogCritical(exception, "Could not write capture recovery files");
+            throw new IOException(error, exception);
+        }
+        string notice = $"数据库未完成写入；{remaining.Count} 条待写报文已转存恢复文件，尚未计为已保存。";
+        SetRecoveryError(notice);
+        logger.LogError("Spooled {Count} pending frames for recovery at {Path}", remaining.Count, journalPath);
+    }
+
+    private async Task FinishRemainingSessionsAsync()
+    {
+        foreach (SessionContext context in sessions.Values.ToArray())
+        {
+            try
+            {
+                if (context.Pending != 0) throw new InvalidOperationException("后台任务结束但会话仍有待写记录。");
+                CaptureSessionState finalState = context.DesiredTerminalState ?? CaptureSessionState.Completed;
+                await repository.CompleteSessionAsync(context.Id, finalState, context.Lost).ConfigureAwait(false);
+                lock (gate)
+                {
+                    context.Active = false;
+                    context.State = finalState;
+                    context.Error = context.Lost > 0 ? $"存储积压曾导致 {context.Lost} 条报文丢失。" : null;
+                    sessions.Remove(context.Id);
+                }
+            }
+            catch (Exception exception)
+            {
+                string error = "退出时结束采集会话失败：" + exception.Message;
+                SetRecoveryError(error);
+                logger.LogError(exception, "Could not finish session {SessionId} during shutdown", context.Id);
+                try
+                {
                     if (context.Lost > 0)
                         await Task.Run(() => SaveJournal([], new Dictionary<Guid, long> { [context.Id] = context.Lost })).ConfigureAwait(false);
                 }
+                catch (Exception journalException)
+                {
+                    string journalError = "恢复文件写入失败：" + journalException.Message;
+                    SetRecoveryError(journalError);
+                    logger.LogCritical(journalException, "Could not preserve lost count for {SessionId}", context.Id);
+                    throw new IOException(journalError, journalException);
+                }
+                throw new IOException(error, exception);
             }
-            try { await repository.CheckpointAndBackupAsync().ConfigureAwait(false); }
-            catch (Exception exception) { logger.LogError(exception, "Could not checkpoint or back up measurement database"); }
+        }
+    }
+
+    private void SetRecoveryError(string message)
+    {
+        lock (gate)
+        {
+            storageError = message;
+            foreach (SessionContext context in sessions.Values)
+            {
+                context.State = CaptureSessionState.WaitingForStorage;
+                context.Error = message;
+            }
         }
     }
 
@@ -271,7 +402,9 @@ public sealed class CapturePersistenceService : ICapturePersistence
                             if (!sessions.TryGetValue(group.Key, out SessionContext? context)) continue;
                             context.Saved += group.Count();
                             context.Pending -= group.Count();
-                            context.Error = context.Lost > 0 ? $"存储队列溢出，已丢失 {context.Lost} 条报文。" : null;
+                            context.Error = context.State == CaptureSessionState.WaitingForStorage
+                                ? "待写数据已恢复，请重试停止以结束会话。"
+                                : context.Lost > 0 ? $"存储队列溢出，已丢失 {context.Lost} 条报文。" : null;
                             if (context.Pending == 0) context.Drained.TrySetResult();
                         }
                     }
@@ -337,14 +470,23 @@ public sealed class CapturePersistenceService : ICapturePersistence
         Directory.CreateDirectory(Path.GetDirectoryName(journalPath)!);
         if (remaining.Count > 0)
         {
+            var byId = new Dictionary<Guid, QueuedCapture>();
+            if (File.Exists(journalPath))
+            {
+                foreach (string line in File.ReadLines(journalPath).Where(line => !string.IsNullOrWhiteSpace(line)))
+                {
+                    QueuedCapture existing = JsonSerializer.Deserialize<QueuedCapture>(line)
+                        ?? throw new InvalidDataException("恢复文件包含空记录。");
+                    byId[existing.Id] = existing;
+                }
+            }
+            foreach (QueuedCapture item in remaining) byId[item.Id] = item;
             string temporary = journalPath + ".tmp";
             using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None,
                 4096, FileOptions.WriteThrough))
             using (var writer = new StreamWriter(stream))
             {
-                if (File.Exists(journalPath))
-                    foreach (string line in File.ReadLines(journalPath)) writer.WriteLine(line);
-                foreach (QueuedCapture item in remaining) writer.WriteLine(JsonSerializer.Serialize(item));
+                foreach (QueuedCapture item in byId.Values) writer.WriteLine(JsonSerializer.Serialize(item));
                 writer.Flush();
                 stream.Flush(true);
             }
@@ -375,6 +517,8 @@ public sealed class CapturePersistenceService : ICapturePersistence
         public Guid DeviceId { get; } = deviceId;
         public bool Active { get; set; } = true;
         public bool Stopping { get; set; }
+        public CaptureSessionState? DesiredTerminalState { get; set; }
+        public SemaphoreSlim EndGate { get; } = new(1, 1);
         public CaptureSessionState State { get; set; } = CaptureSessionState.Active;
         public long Saved { get; set; }
         public long Pending { get; set; }

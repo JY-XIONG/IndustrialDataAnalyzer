@@ -6,6 +6,7 @@ public interface IMeasurementRepository
 {
     Task InitializeAsync(CancellationToken cancellationToken = default);
     Task CreateSessionAsync(CaptureSession session, CancellationToken cancellationToken = default);
+    Task SetSessionStateAsync(Guid sessionId, CaptureSessionState state, CancellationToken cancellationToken = default);
     Task SaveBatchAsync(IReadOnlyList<MeasurementRecord> records, CancellationToken cancellationToken = default);
     Task CompleteSessionAsync(Guid sessionId, CaptureSessionState state, long lostCount,
         CancellationToken cancellationToken = default);

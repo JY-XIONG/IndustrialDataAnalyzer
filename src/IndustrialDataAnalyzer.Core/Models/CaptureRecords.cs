@@ -1,6 +1,7 @@
 namespace IndustrialDataAnalyzer.Core.Models;
 
-public enum CaptureSessionState { Active, Completed, Failed, Interrupted }
+// Values 0-3 are already stored in SQLite; append new states without renumbering them.
+public enum CaptureSessionState { Active, Completed, Failed, Interrupted, Stopping, WaitingForStorage }
 
 public sealed record CaptureSession(
     Guid Id, Guid DeviceId, string DeviceName, DateTimeOffset StartedUtc,

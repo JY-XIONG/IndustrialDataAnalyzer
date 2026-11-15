@@ -137,6 +137,62 @@ public sealed class SqliteMeasurementRepositoryTests
         }
     }
 
+    [Theory]
+    [InlineData(CaptureSessionState.Stopping)]
+    [InlineData(CaptureSessionState.WaitingForStorage)]
+    public async Task RestartMarksIntermediateSessionInterruptedAndPreservesRecords(CaptureSessionState state)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "IndustrialDataAnalyzer.Tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new ApplicationPaths(root);
+            var repository = new SqliteMeasurementRepository(paths);
+            await repository.InitializeAsync();
+            CaptureSession session = Session(Guid.NewGuid(), "待恢复设备", DateTimeOffset.UtcNow);
+            await repository.CreateSessionAsync(session);
+            await repository.SaveBatchAsync([Record(session, DateTimeOffset.UtcNow, "12", 12)]);
+            await repository.SetSessionStateAsync(session.Id, state);
+            Assert.Equal(state, Assert.Single(await repository.ListSessionsAsync()).State);
+
+            var reopened = new SqliteMeasurementRepository(paths);
+            await reopened.InitializeAsync();
+            CaptureSession recovered = Assert.Single(await reopened.ListSessionsAsync());
+            Assert.Equal(CaptureSessionState.Interrupted, recovered.State);
+            Assert.Equal(1, recovered.ValidCount);
+            Assert.Single((await reopened.QueryAsync(new HistoryQuery(SessionId: session.Id))).Records);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task CompletingSessionAgainAfterCommitIsIdempotent()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "IndustrialDataAnalyzer.Tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new ApplicationPaths(root);
+            var repository = new SqliteMeasurementRepository(paths);
+            await repository.InitializeAsync();
+            CaptureSession session = Session(Guid.NewGuid(), "重试设备", DateTimeOffset.UtcNow);
+            await repository.CreateSessionAsync(session);
+            await repository.SetSessionStateAsync(session.Id, CaptureSessionState.Stopping);
+            await repository.CompleteSessionAsync(session.Id, CaptureSessionState.Failed, 2);
+            await repository.CompleteSessionAsync(session.Id, CaptureSessionState.Failed, 2);
+            CaptureSession completed = Assert.Single(await repository.ListSessionsAsync());
+            Assert.Equal(CaptureSessionState.Failed, completed.State);
+            Assert.Equal(2, completed.LostCount);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
     private static CaptureSession Session(Guid deviceId, string name, DateTimeOffset start) =>
         new(Guid.NewGuid(), deviceId, name, start.ToUniversalTime(), null, 0, 0, 0, 0, CaptureSessionState.Active);
 

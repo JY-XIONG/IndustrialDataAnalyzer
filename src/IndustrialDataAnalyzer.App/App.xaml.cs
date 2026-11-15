@@ -216,6 +216,12 @@ public partial class App : System.Windows.Application
             MessageBox.Show(
                 $"程序启动失败。\n原因：{reason}\n\n如果没有生成日志，请检查 %LocalAppData%\\IndustrialDataAnalyzer 的写入权限。",
                 "启动失败", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (host is not null)
+            {
+                try { await DisposeHostAsync(host); }
+                catch (Exception disposeError) { Trace.TraceError("Host cleanup after startup failure: {0}", disposeError); }
+                host = null;
+            }
             Shutdown(1);
         }
     }
@@ -223,12 +229,15 @@ public partial class App : System.Windows.Application
     /// <inheritdoc />
     protected override void OnExit(ExitEventArgs e)
     {
-        host?.Dispose();
         Log.CloseAndFlush();
         base.OnExit(e);
     }
 
-    private async Task ShutdownApplicationAsync()
+    internal static ValueTask DisposeHostAsync(IHost ownedHost) => ownedHost is IAsyncDisposable asyncHost
+        ? asyncHost.DisposeAsync()
+        : throw new InvalidOperationException("Host 不支持异步释放，无法安全释放异步服务。");
+
+    private async Task ShutdownApplicationAsync(int exitCode = 0)
     {
         if (isShuttingDown)
         {
@@ -237,21 +246,47 @@ public partial class App : System.Windows.Application
 
         isShuttingDown = true;
         Log.Information("Application closing");
+        Exception? shutdownError = null;
+        IHost? closingHost = host;
+        host = null;
         try
         {
-            if (host is not null)
+            if (closingHost is not null)
             {
-                await host.Services.GetRequiredService<IDeviceManager>().DisposeAsync();
-                await host.StopAsync(TimeSpan.FromSeconds(5));
+                try { await closingHost.Services.GetRequiredService<IDeviceManager>().DisposeAsync(); }
+                catch (Exception exception)
+                {
+                    shutdownError = exception;
+                    Log.Error(exception, "Device and capture shutdown failed");
+                }
+                try { await closingHost.StopAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception exception)
+                {
+                    shutdownError ??= exception;
+                    Log.Error(exception, "Host stop failed");
+                }
+                try { await DisposeHostAsync(closingHost); }
+                catch (Exception exception)
+                {
+                    shutdownError ??= exception;
+                    Log.Error(exception, "Async Host disposal failed");
+                }
             }
         }
         catch (Exception exception)
         {
-            Log.Error(exception, "Application shutdown failed");
+            shutdownError ??= exception;
+            Log.Error(exception, "Application shutdown failed unexpectedly");
         }
         finally
         {
-            Shutdown();
+            if (shutdownError is not null)
+            {
+                MessageBox.Show("关闭时存储或资源释放失败：" + shutdownError.GetBaseException().Message +
+                    "\n待写数据不能视为已保存，请检查日志和恢复文件。",
+                    "关闭异常", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            Shutdown(exitCode);
         }
     }
 
@@ -260,7 +295,7 @@ public partial class App : System.Windows.Application
         Log.Error(e.Exception, "Unhandled UI exception");
         MessageBox.Show("程序发生错误，即将退出。请查看日志。", "程序错误", MessageBoxButton.OK, MessageBoxImage.Error);
         e.Handled = true;
-        Shutdown(1);
+        _ = ShutdownApplicationAsync(1);
     }
 
     private static void ReportDomainException(object sender, UnhandledExceptionEventArgs e) =>

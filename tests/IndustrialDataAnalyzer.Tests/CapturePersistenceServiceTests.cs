@@ -134,6 +134,154 @@ public sealed class CapturePersistenceServiceTests
         finally { Cleanup(root); }
     }
 
+    [Fact]
+    public async Task NormalShutdownFlushesAcceptedFramesAndCompletesSession()
+    {
+        string root = NewRoot();
+        try
+        {
+            var paths = new ApplicationPaths(root);
+            var store = new SqliteMeasurementRepository(paths);
+            var persistence = new CapturePersistenceService(store, new FrameParser(), paths,
+                NullLogger<CapturePersistenceService>.Instance, TimeSpan.FromSeconds(3));
+            await persistence.InitializeAsync();
+            DeviceDefinition device = Simulator("Normal close");
+            Guid session = await persistence.BeginSessionAsync(device);
+            for (int index = 0; index < 20; index++)
+                Assert.True(persistence.TryAccept(session,
+                    new RawFrame(device.Id, DateTimeOffset.UtcNow, FrameSource.Simulator, index.ToString()), device.Parser));
+
+            await persistence.DisposeAsync();
+
+            Assert.Equal(20, persistence.GetStatus(device.Id).SavedCount);
+            Assert.Equal(0, persistence.GetStatus(device.Id).PendingCount);
+            Assert.Equal(CaptureSessionState.Completed, persistence.GetStatus(device.Id).State);
+            Assert.Equal(20, (await store.QueryAsync(new HistoryQuery())).TotalCount);
+            Assert.Equal(CaptureSessionState.Completed, Assert.Single(await store.ListSessionsAsync()).State);
+            Assert.False(File.Exists(Path.Combine(paths.DataDirectory, "pending-capture.jsonl")));
+            Assert.True(File.Exists(Path.Combine(paths.DataDirectory, "measurements.db.bak")));
+        }
+        finally { Cleanup(root); }
+    }
+
+    [Fact]
+    public async Task StopWaitsForStorageThenRetryCompletesAndFailureStateIsPreserved()
+    {
+        string root = NewRoot();
+        try
+        {
+            var paths = new ApplicationPaths(root);
+            var failing = new FailWritesRepository(new SqliteMeasurementRepository(paths)) { FailWrites = true };
+            await using var persistence = new CapturePersistenceService(failing, new FrameParser(), paths,
+                NullLogger<CapturePersistenceService>.Instance, TimeSpan.FromSeconds(3),
+                sessionDrainTimeout: TimeSpan.FromMilliseconds(150));
+            await persistence.InitializeAsync();
+            DeviceDefinition device = Simulator("Retry stop");
+            Guid session = await persistence.BeginSessionAsync(device);
+            Assert.True(persistence.TryAccept(session,
+                new RawFrame(device.Id, DateTimeOffset.UtcNow, FrameSource.Simulator, "12.5"), device.Parser));
+            await WaitUntilAsync(() => persistence.StorageError is not null);
+
+            await Assert.ThrowsAsync<IOException>(() => persistence.EndSessionAsync(session));
+            Assert.Equal(CaptureSessionState.WaitingForStorage, persistence.GetStatus(device.Id).State);
+            Assert.Equal(0, persistence.GetStatus(device.Id).SavedCount);
+            Assert.Equal(CaptureSessionState.WaitingForStorage, Assert.Single(await failing.ListSessionsAsync()).State);
+
+            failing.FailWrites = false;
+            await persistence.EndSessionAsync(session);
+            Assert.Equal(CaptureSessionState.Completed, persistence.GetStatus(device.Id).State);
+            Assert.Equal(1, persistence.GetStatus(device.Id).SavedCount);
+            Guid failedSession = await persistence.BeginSessionAsync(device);
+            await persistence.EndSessionAsync(failedSession, CaptureSessionState.Failed);
+            Assert.Equal(CaptureSessionState.Failed, persistence.GetStatus(device.Id).State);
+            Assert.Contains(await failing.ListSessionsAsync(), item => item.Id == failedSession &&
+                item.State == CaptureSessionState.Failed);
+        }
+        finally { Cleanup(root); }
+    }
+
+    [Fact]
+    public async Task UnresponsiveWriterPreventsRacyJournalUntilWriterActuallyStops()
+    {
+        string root = NewRoot();
+        try
+        {
+            var paths = new ApplicationPaths(root);
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var failing = new FailWritesRepository(new SqliteMeasurementRepository(paths))
+            {
+                SaveOverride = async (_, _) =>
+                {
+                    started.TrySetResult();
+                    await release.Task;
+                    throw new IOException("延迟数据库故障");
+                }
+            };
+            var persistence = new CapturePersistenceService(failing, new FrameParser(), paths,
+                NullLogger<CapturePersistenceService>.Instance, TimeSpan.FromMilliseconds(100),
+                workerStopTimeout: TimeSpan.FromMilliseconds(100));
+            await persistence.InitializeAsync();
+            DeviceDefinition device = Simulator("Slow writer");
+            Guid session = await persistence.BeginSessionAsync(device);
+            Assert.True(persistence.TryAccept(session,
+                new RawFrame(device.Id, DateTimeOffset.UtcNow, FrameSource.Simulator, "8"), device.Parser));
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            IOException timeout = await Assert.ThrowsAsync<IOException>(() => persistence.DisposeAsync().AsTask());
+            Assert.Contains("仍未停止", timeout.Message);
+            Assert.False(File.Exists(Path.Combine(paths.DataDirectory, "pending-capture.jsonl")));
+            Assert.Equal(0, persistence.GetStatus(device.Id).SavedCount);
+            Assert.Equal(1, persistence.GetStatus(device.Id).PendingCount);
+
+            release.SetResult();
+            await persistence.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(File.Exists(Path.Combine(paths.DataDirectory, "pending-capture.jsonl")));
+            failing.SaveOverride = null;
+            await using var restarted = NewPersistence(failing, paths);
+            await restarted.InitializeAsync();
+            Assert.Equal(1, (await failing.QueryAsync(new HistoryQuery())).TotalCount);
+            Assert.Equal(CaptureSessionState.Interrupted, Assert.Single(await failing.ListSessionsAsync()).State);
+        }
+        finally { Cleanup(root); }
+    }
+
+    [Fact]
+    public async Task JournalWriteFailureReportsUnsavedDataAndRetryCanRecover()
+    {
+        string root = NewRoot();
+        try
+        {
+            var paths = new ApplicationPaths(root);
+            var failing = new FailWritesRepository(new SqliteMeasurementRepository(paths)) { FailWrites = true };
+            var persistence = new CapturePersistenceService(failing, new FrameParser(), paths,
+                NullLogger<CapturePersistenceService>.Instance, TimeSpan.FromMilliseconds(100));
+            await persistence.InitializeAsync();
+            DeviceDefinition device = Simulator("Journal failure");
+            Guid session = await persistence.BeginSessionAsync(device);
+            Assert.True(persistence.TryAccept(session,
+                new RawFrame(device.Id, DateTimeOffset.UtcNow, FrameSource.Simulator, "9"), device.Parser));
+            await WaitUntilAsync(() => persistence.StorageError is not null);
+            string journalPath = Path.Combine(paths.DataDirectory, "pending-capture.jsonl");
+            Directory.CreateDirectory(journalPath); // blocks the final atomic rename
+
+            IOException failure = await Assert.ThrowsAsync<IOException>(() => persistence.DisposeAsync().AsTask());
+            Assert.Contains("恢复文件写入失败", failure.Message);
+            Assert.Contains("恢复文件写入失败", persistence.StorageError);
+            Assert.Equal(0, persistence.GetStatus(device.Id).SavedCount);
+            Assert.Equal(1, persistence.GetStatus(device.Id).PendingCount);
+            Directory.Delete(journalPath);
+
+            await persistence.DisposeAsync();
+            Assert.True(File.Exists(journalPath));
+            failing.FailWrites = false;
+            await using var restarted = NewPersistence(failing, paths);
+            await restarted.InitializeAsync();
+            Assert.Equal(1, (await failing.QueryAsync(new HistoryQuery())).TotalCount);
+        }
+        finally { Cleanup(root); }
+    }
+
     private static CapturePersistenceService NewPersistence(IMeasurementRepository repository, ApplicationPaths paths) =>
         new(repository, new FrameParser(), paths, NullLogger<CapturePersistenceService>.Instance);
 
@@ -162,9 +310,13 @@ public sealed class CapturePersistenceServiceTests
     private sealed class FailWritesRepository(IMeasurementRepository inner) : IMeasurementRepository
     {
         public volatile bool FailWrites;
+        public Func<IReadOnlyList<MeasurementRecord>, CancellationToken, Task>? SaveOverride;
         public Task InitializeAsync(CancellationToken token = default) => inner.InitializeAsync(token);
         public Task CreateSessionAsync(CaptureSession session, CancellationToken token = default) => inner.CreateSessionAsync(session, token);
+        public Task SetSessionStateAsync(Guid id, CaptureSessionState state, CancellationToken token = default) =>
+            inner.SetSessionStateAsync(id, state, token);
         public Task SaveBatchAsync(IReadOnlyList<MeasurementRecord> records, CancellationToken token = default) =>
+            SaveOverride is not null ? SaveOverride(records, token) :
             FailWrites ? Task.FromException(new IOException("测试数据库故障")) : inner.SaveBatchAsync(records, token);
         public Task CompleteSessionAsync(Guid id, CaptureSessionState state, long lost, CancellationToken token = default) =>
             inner.CompleteSessionAsync(id, state, lost, token);

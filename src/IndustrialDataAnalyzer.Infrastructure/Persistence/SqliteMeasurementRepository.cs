@@ -78,10 +78,12 @@ public sealed class SqliteMeasurementRepository : IMeasurementRepository
         }
         using var recover = Command(connection, """
             UPDATE capture_sessions SET state=@interrupted, ended_utc_ms=@now
-            WHERE state=@active;
+            WHERE state IN (@active,@stopping,@waiting);
             """);
         recover.Parameters.AddWithValue("@interrupted", (int)CaptureSessionState.Interrupted);
         recover.Parameters.AddWithValue("@active", (int)CaptureSessionState.Active);
+        recover.Parameters.AddWithValue("@stopping", (int)CaptureSessionState.Stopping);
+        recover.Parameters.AddWithValue("@waiting", (int)CaptureSessionState.WaitingForStorage);
         recover.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         recover.ExecuteNonQuery();
     }, cancellationToken);
@@ -100,6 +102,24 @@ public sealed class SqliteMeasurementRepository : IMeasurementRepository
         command.Parameters.AddWithValue("@started", session.StartedUtc.ToUnixTimeMilliseconds());
         command.Parameters.AddWithValue("@state", (int)session.State);
         command.ExecuteNonQuery();
+    }, cancellationToken);
+
+    public Task SetSessionStateAsync(Guid sessionId, CaptureSessionState state, CancellationToken cancellationToken = default) => Task.Run(() =>
+    {
+        if (state is not (CaptureSessionState.Stopping or CaptureSessionState.WaitingForStorage))
+            throw new ArgumentOutOfRangeException(nameof(state));
+        cancellationToken.ThrowIfCancellationRequested();
+        using var connection = Open();
+        using var command = Command(connection, """
+            UPDATE capture_sessions SET state=@state WHERE id=@id AND state IN (@active,@stopping,@waiting);
+            """);
+        command.Parameters.AddWithValue("@state", (int)state);
+        command.Parameters.AddWithValue("@id", sessionId.ToString("N"));
+        command.Parameters.AddWithValue("@active", (int)CaptureSessionState.Active);
+        command.Parameters.AddWithValue("@stopping", (int)CaptureSessionState.Stopping);
+        command.Parameters.AddWithValue("@waiting", (int)CaptureSessionState.WaitingForStorage);
+        if (command.ExecuteNonQuery() != 1)
+            throw new InvalidOperationException("采集会话不存在或已结束，无法更新状态。");
     }, cancellationToken);
 
     public Task SaveBatchAsync(IReadOnlyList<MeasurementRecord> records, CancellationToken cancellationToken = default) => Task.Run(() =>
@@ -153,19 +173,28 @@ public sealed class SqliteMeasurementRepository : IMeasurementRepository
     public Task CompleteSessionAsync(Guid sessionId, CaptureSessionState state, long lostCount,
         CancellationToken cancellationToken = default) => Task.Run(() =>
     {
+        if (state is not (CaptureSessionState.Completed or CaptureSessionState.Failed))
+            throw new ArgumentOutOfRangeException(nameof(state));
         cancellationToken.ThrowIfCancellationRequested();
         using var connection = Open();
         using var command = Command(connection, """
             UPDATE capture_sessions SET state=@state, ended_utc_ms=@ended,
                 total_count=valid_count+failed_count+@lost, lost_count=@lost
-            WHERE id=@id AND state=@active;
+            WHERE id=@id AND state IN (@active,@stopping,@waiting);
             """);
         command.Parameters.AddWithValue("@state", (int)state);
         command.Parameters.AddWithValue("@ended", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         command.Parameters.AddWithValue("@lost", lostCount);
         command.Parameters.AddWithValue("@id", sessionId.ToString("N"));
         command.Parameters.AddWithValue("@active", (int)CaptureSessionState.Active);
-        if (command.ExecuteNonQuery() != 1) throw new InvalidOperationException("采集会话不存在或已结束。");
+        command.Parameters.AddWithValue("@stopping", (int)CaptureSessionState.Stopping);
+        command.Parameters.AddWithValue("@waiting", (int)CaptureSessionState.WaitingForStorage);
+        if (command.ExecuteNonQuery() == 1) return;
+        using var existing = Command(connection, "SELECT state,lost_count FROM capture_sessions WHERE id=@id;");
+        existing.Parameters.AddWithValue("@id", sessionId.ToString("N"));
+        using var reader = existing.ExecuteReader();
+        if (!reader.Read() || reader.GetInt32(0) != (int)state || reader.GetInt64(1) < lostCount)
+            throw new InvalidOperationException("采集会话不存在、状态不匹配或丢失数未落盘。");
     }, cancellationToken);
 
     public Task SetLostCountAsync(Guid sessionId, long lostCount, CancellationToken cancellationToken = default) => Task.Run(() =>

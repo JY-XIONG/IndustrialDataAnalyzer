@@ -191,6 +191,8 @@ public partial class AcquisitionViewModel : PageViewModel
         {
             CaptureSessionState.Active when status.PendingCount > 0 => "采集中 · 正在写入数据库",
             CaptureSessionState.Active => "采集中 · 存储正常",
+            CaptureSessionState.Stopping => "正在停止 · 等待记录落盘",
+            CaptureSessionState.WaitingForStorage => "等待存储恢复 · 可重试停止",
             CaptureSessionState.Completed => "会话已结束 · 数据已落盘",
             CaptureSessionState.Failed => "会话异常结束",
             CaptureSessionState.Interrupted => "会话意外中断",
